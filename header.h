@@ -4,20 +4,22 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <semaphore.h>
-#include <string.h>
 #include <sys/ipc.h> 
 #include <sys/shm.h>
 #include <sys/fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <string.h>
 
 //functions
-void fecha_server();
+void close_server();
+void stat_manager();
 void load_conf();
-void cria_processos();
-void *worker_threads(void);
-void cria_threads();
-void cria_stat_sm();
-void gestor_estatisticas();
-void liga_server();
+void start_stat_process();
+void *worker_thread();
+void start_threads();
+void start_sm();
 void setup_server();
 int main();
 
@@ -30,10 +32,10 @@ typedef struct config{
 }Config;
 
 typedef struct stats{
-	
+
 }Stats;
 
-typedef struct buffer
-{
-
+typedef struct buffer{
+	struct buffer *next;
+	struct buffer *prev;	
 }Buffer;
