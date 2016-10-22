@@ -17,7 +17,6 @@ void gestor_estatisticas(){
 }
 
 void load_conf(){
-	printf("Loaf Config!\n");
 	FILE *f;
 	char line[50];
 
@@ -26,6 +25,13 @@ void load_conf(){
 		perror("Erro na leitura do ficheiro!\n");
 		exit(0);
 	}
+
+	if((config_sm_id = shmget(IPC_PRIVATE, sizeof(Config),IPC_CREAT | 0766)) != -1){
+		printf("Config shared mem ID: %d\n",config_sm_id);
+		config = (Config*) shmat(config_sm_id,NULL,0);
+	}
+	else
+		perror("Error creating configid\n");
 
 	if(fscanf(f, "SERVERPORT=%d\n", &(config->port))!=1){
 		perror("Error reading port!\n");
@@ -52,22 +58,16 @@ void load_conf(){
 }
 
 void cria_processos(){
-	pid_t stat_pid, config_pid;
+	pid_t stat_pid;
 
 	stat_pid = fork();
-	if(stat_pid != 0 && stat_pid !=-1){
-		config_pid = fork();
-		if(config_pid==0){
-			printf("Process for config created! PID of config: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
-			load_conf();
-		}
-	}
-	else if(stat_pid == 0 && stat_pid != -1){
+	if(stat_pid == 0){
 		printf("Process for statistics created! PID of statistics: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
 		gestor_estatisticas();
 	}
-	else if(stat_pid == -1 || config_pid == -1)
-		perror("Error while creating process\n");
+	else if(stat_pid == -1){
+		perror("Error creating process!\n");
+	}
 }
 
 void *worker_threads(void){
@@ -100,22 +100,15 @@ void cria_threads(){
 	}
 }
 
-void cria_sm(){
+void cria_stat_sm(){
 
 	stat_sm_id = shmget(IPC_PRIVATE, 1, IPC_CREAT | 0766);
 	if( stat_sm_id != -1){
-		printf("Stat shared mem ID: %d\n",stat_sm_id );
+		printf("STAT ID: %d\n",stat_sm_id );
 		int stat_ptr = shmat(stat_sm_id,NULL,0);
 	}
 	else
-		perror("Error sm stat!\n");
-
-	if((config_sm_id = shmget(IPC_PRIVATE, sizeof(Config),IPC_CREAT | 0766)) != -1){
-		printf("Config shared mem ID: %d\n",config_sm_id);
-		config = (Config*) shmat(config_sm_id,NULL,0);
-	}
-	else
-		perror("Error sm config\n");
+		perror("Erro com o shmget!\n");
 }
 
 
@@ -125,10 +118,10 @@ void liga_server(){
 }
 
 void setup_server(){
-	cria_sm();
+	load_conf();
 	cria_processos();
 	cria_threads();
-	wait(NULL);
+	cria_stat_sm();
 }
 
 int main(){
