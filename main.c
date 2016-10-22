@@ -17,6 +17,7 @@ void gestor_estatisticas(){
 }
 
 void load_conf(){
+	printf("Loaf Config!\n");
 	FILE *f;
 	char line[50];
 
@@ -25,13 +26,6 @@ void load_conf(){
 		perror("Erro na leitura do ficheiro!\n");
 		exit(0);
 	}
-
-	if((config_sm_id = shmget(IPC_PRIVATE, sizeof(Config),IPC_CREAT | 0766)) != -1){
-		printf("Config shared mem ID: %d\n",config_sm_id);
-		config = (Config*) shmat(config_sm_id,NULL,0);
-	}
-	else
-		perror("Error creating configid\n");
 
 	if(fscanf(f, "SERVERPORT=%d\n", &(config->port))!=1){
 		perror("Error reading port!\n");
@@ -55,19 +49,31 @@ void load_conf(){
 	//falta ler os ficheiros permitidos para um array que ainda nao esta criado na estrutura Config;
 
 	fclose(f);
+	exit(0);
 }
 
 void cria_processos(){
-	pid_t stat_pid;
-
+	pid_t stat_pid, config_pid;
+	printf("Entrou cria processos\n");
 	stat_pid = fork();
-	if(stat_pid == 0){
+	if(stat_pid == -1){
+		perror("Error while creating stat process");
+	}
+	else if(stat_pid == 0){
 		printf("Process for statistics created! PID of statistics: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
 		gestor_estatisticas();
+		printf("processo de gestao saiu\n");
 	}
-	else if(stat_pid == -1){
-		perror("Error creating process!\n");
+	config_pid = fork();
+	if(config_pid == -1){
+		perror("Error while creating stat process");
 	}
+	else if(config_pid == 0){
+		printf("Process for config created! PID of config: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
+		load_conf();
+		printf("processo de configuracao saiu\n");
+	}
+	printf("isto nao pode repetir\n");
 }
 
 void *worker_threads(void){
@@ -81,6 +87,7 @@ void cria_threads(){
 	pthread_t threads[size];
 	int id[size];
 
+	printf("entrei no cria threads\n");
 	for(i = 0 ; i<size ;i++) {
 		id[i] = i;
 		if(pthread_create(&threads[i],NULL,worker_threads,&id[i])==0){
@@ -100,15 +107,22 @@ void cria_threads(){
 	}
 }
 
-void cria_stat_sm(){
+void cria_sm(){
 
 	stat_sm_id = shmget(IPC_PRIVATE, 1, IPC_CREAT | 0766);
 	if( stat_sm_id != -1){
-		printf("STAT ID: %d\n",stat_sm_id );
+		printf("Stat shared mem ID: %d\n",stat_sm_id );
 		int stat_ptr = shmat(stat_sm_id,NULL,0);
 	}
 	else
-		perror("Erro com o shmget!\n");
+		perror("Error sm stat!\n");
+
+	if((config_sm_id = shmget(IPC_PRIVATE, sizeof(Config),IPC_CREAT | 0766)) != -1){
+		printf("Config shared mem ID: %d\n",config_sm_id);
+		config = (Config*) shmat(config_sm_id,NULL,0);
+	}
+	else
+		perror("Error sm config\n");
 }
 
 
@@ -118,14 +132,14 @@ void liga_server(){
 }
 
 void setup_server(){
-	load_conf();
+	cria_sm();
 	cria_processos();
+	printf("apos cria processos\n");
 	cria_threads();
-	cria_stat_sm();
+	wait(NULL);
 }
 
 int main(){
 	liga_server();
 	return 0;
 }
-
