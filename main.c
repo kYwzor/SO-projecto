@@ -7,26 +7,25 @@ int config_sm_id, stat_sm_id;
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
-void fecha_server(){
+void close_server(){
 	pthread_mutex_destroy(&mutex);
 }
 
-void gestor_estatisticas(){
+void stat_manager(){
 	printf("Gestor de estatisticas!\n");
-	exit(0);
 }
 
 void load_conf(){
-	printf("Loaf Config!\n");
+	printf("Load Config!\n");
 	FILE *f;
-	char line[50];
+	char line[50], aux[50];
+	char *token, **strlist;
+	int count=0, i=0;
 
 	f = fopen ("config.txt", "r");
 	if(f==NULL){
 		perror("Erro na leitura do ficheiro!\n");
-		exit(0);
 	}
-
 	if(fscanf(f, "SERVERPORT=%d\n", &(config->port))!=1){
 		perror("Error reading port!\n");
 	}
@@ -46,32 +45,45 @@ void load_conf(){
 	}
 	printf("Threadpool: %d\n",config->threadp);
 
-	//falta ler os ficheiros permitidos para um array que ainda nao esta criado na estrutura Config;
+	if(fscanf(f, "ALLOWED=%s\n", line)!=1){
+		perror("Error reading allowed compressed files");
+	}
 
+	strcpy(aux, line);
+	token=strtok(aux, ";");
+	while(token != NULL){
+		count++;
+		token = strtok(NULL, ";");
+	}
+
+	strlist=(char**) malloc(count*sizeof(char*));
+
+	token=strtok(line, ";");
+	while(token != NULL){
+		strlist[i]=strdup(token);
+		token = strtok(NULL, ";");
+		i++;
+	}
+
+	for(i=0; i<count; i++){
+		printf("%s\n", strlist[i]);
+	}
+	//todo: prints de debug com if
 	fclose(f);
-	exit(0);
 }
 
-void cria_processos(){
+void start_stat_process(){
 	pid_t stat_pid, config_pid;
-	printf("Entrou cria processos\n");
+	printf("Entrou start_stat_process\n");
 	stat_pid = fork();
 	if(stat_pid == -1){
 		perror("Error while creating stat process");
 	}
 	else if(stat_pid == 0){
 		printf("Process for statistics created! PID of statistics: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
-		gestor_estatisticas();
+		stat_manager();
 		printf("processo de gestao saiu\n");
-	}
-	config_pid = fork();
-	if(config_pid == -1){
-		perror("Error while creating stat process");
-	}
-	else if(config_pid == 0){
-		printf("Process for config created! PID of config: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
-		load_conf();
-		printf("processo de configuracao saiu\n");
+		exit(0);
 	}
 	printf("isto nao pode repetir\n");
 }
@@ -82,7 +94,7 @@ void *worker_threads(void){
 	pthread_exit(NULL);
 }
 
-void cria_threads(){
+void start_threads(){
 	int i, size=config->threadp;
 	pthread_t threads[size];
 	int id[size];
@@ -107,7 +119,7 @@ void cria_threads(){
 	}
 }
 
-void cria_sm(){
+void start_sm(){
 
 	stat_sm_id = shmget(IPC_PRIVATE, 1, IPC_CREAT | 0766);
 	if( stat_sm_id != -1){
@@ -126,20 +138,16 @@ void cria_sm(){
 }
 
 
-void liga_server(){
-	setup_server();
-	fecha_server();
-}
-
 void setup_server(){
-	cria_sm();
-	cria_processos();
-	printf("apos cria processos\n");
-	cria_threads();
+	start_sm();
+	load_conf();
+	start_stat_process();
+	start_threads();
 	wait(NULL);
 }
 
 int main(){
-	liga_server();
+	setup_server();
+	close_server();
 	return 0;
 }
