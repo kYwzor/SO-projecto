@@ -29,6 +29,7 @@ typedef struct config{
 	int port;
 	int sched;
 	int threadp;
+
 }Config;
 
 typedef struct stats{
@@ -39,3 +40,5 @@ typedef struct buffer{
 	struct buffer *next;
 	struct buffer *prev;	
 }Buffer;
+
+//	gcc simplehttpd.c semlib.c -lpthread -D_REENTRANT -Wall -o run

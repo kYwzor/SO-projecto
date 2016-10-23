@@ -1,8 +1,9 @@
 #include "header.h"
+#include "simplehttpd.c"
 
 //variaveis globais
 Config *config;
-Stats *stat;
+Stats *stats;
 int config_sm_id, stat_sm_id;
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -72,8 +73,50 @@ void load_conf(){
 	fclose(f);
 }
 
+int run_http(){
+	struct sockaddr_in client_name;
+	socklen_t client_name_len = sizeof(client_name);
+	int port;
+
+	signal(SIGINT,catch_ctrlc);
+
+	port=config->port;
+	printf("Listening for HTTP requests on port %d\n",port);
+
+	// Configure listening port
+	if ((socket_conn=fireup(port))==-1)
+		exit(1);
+
+	// Serve requests 
+	while (1)
+	{
+		// Accept connection on socket
+		if ( (new_conn = accept(socket_conn,(struct sockaddr *)&client_name,&client_name_len)) == -1 ) {
+			printf("Error accepting connection\n");
+			exit(1);
+		}
+
+		// Identify new client
+		identify(new_conn);
+
+		// Process request
+		get_request(new_conn);
+
+		// Verify if request is for a page or script
+		if(!strncmp(req_buf,CGI_EXPR,strlen(CGI_EXPR)))
+			execute_script(new_conn);	
+		else
+			// Search file with html page and send to client
+			send_page(new_conn);
+	
+		// Terminate connection with client 
+		close(new_conn);
+
+	}
+}
+
 void start_stat_process(){
-	pid_t stat_pid, config_pid;
+	pid_t stat_pid;
 	printf("Entrou start_stat_process\n");
 	stat_pid = fork();
 	if(stat_pid == -1){
@@ -88,7 +131,7 @@ void start_stat_process(){
 	printf("isto nao pode repetir\n");
 }
 
-void *worker_threads(void){
+void *worker_threads(){
 	printf("Entrou na worker da thread\n");
 	usleep(1000);
 	pthread_exit(NULL);
@@ -124,7 +167,7 @@ void start_sm(){
 	stat_sm_id = shmget(IPC_PRIVATE, 1, IPC_CREAT | 0766);
 	if( stat_sm_id != -1){
 		printf("Stat shared mem ID: %d\n",stat_sm_id );
-		int stat_ptr = shmat(stat_sm_id,NULL,0);
+		stats = (Stats*) shmat(stat_sm_id,NULL,0);
 	}
 	else
 		perror("Error sm stat!\n");
@@ -143,6 +186,7 @@ void setup_server(){
 	load_conf();
 	start_stat_process();
 	start_threads();
+	run_http();
 	wait(NULL);
 }
 
