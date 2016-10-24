@@ -29,16 +29,19 @@ typedef struct config{
 	int port;
 	int sched;
 	int threadp;
-
 }Config;
 
-typedef struct stats{
+typedef struct request{
+	char *page;
+	time_t time_requested;
+	time_t time_answered;	
+}Request;
 
-}Stats;
-
-typedef struct buffer{
-	struct buffer *next;
-	struct buffer *prev;	
-}Buffer;
+typedef struct lnode_req *Req_list;
+typedef struct lnode_req{
+	Request *req;
+	Req_list next;
+	Req_list prev;
+}Req_list_node;
 
 //	gcc simplehttpd.c semlib.c -lpthread -D_REENTRANT -Wall -o run

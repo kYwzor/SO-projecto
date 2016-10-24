@@ -3,7 +3,7 @@
 
 //variaveis globais
 Config *config;
-Stats *stats;
+Req_list rlist;
 int config_sm_id, stat_sm_id;
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -76,10 +76,14 @@ void load_conf(){
 int run_http(){
 	struct sockaddr_in client_name;
 	socklen_t client_name_len = sizeof(client_name);
-	int port;
+	int port, i;
+	Req_list aux = rlist;
 
 	signal(SIGINT,catch_ctrlc);
 
+	rlist->req=NULL;
+	rlist->next=NULL;
+	rlist->prev=NULL;
 	port=config->port;
 	printf("Listening for HTTP requests on port %d\n",port);
 
@@ -101,6 +105,15 @@ int run_http(){
 
 		// Process request
 		get_request(new_conn);
+		while(aux->next!=NULL) aux=aux->next;
+
+	//!!!alocacao dinamica? alocacao memoria partilhada??
+		aux->next = (Req_list) malloc(sizeof(Req_list_node));
+		(aux->next)->req= (Request*) malloc(sizeof(Request));
+		((aux->next)->req)->page=strdup(req_buf);
+		((aux->next)->req)->time_requested=time(NULL);
+		(aux->next)->next=NULL;
+		(aux->next)->prev=aux;
 
 		// Verify if request is for a page or script
 		if(!strncmp(req_buf,CGI_EXPR,strlen(CGI_EXPR)))
@@ -108,7 +121,18 @@ int run_http(){
 		else
 			// Search file with html page and send to client
 			send_page(new_conn);
-	
+
+		((aux->next)->req)->time_answered=time(NULL);
+
+	//teste:
+		aux=rlist;
+		i=0;
+		while(aux->next!=NULL){
+			aux=aux->next;
+			printf("Pedido %d: %s, recebido em '%s' tratado em '%s'\n", i, aux->req->page, asctime(gmtime(&(aux->req->time_requested))), asctime(gmtime(&(aux->req->time_answered))));
+			i++;
+		}
+
 		// Terminate connection with client 
 		close(new_conn);
 
@@ -164,15 +188,16 @@ void start_threads(){
 
 void start_sm(){
 
-	stat_sm_id = shmget(IPC_PRIVATE, 1, IPC_CREAT | 0766);
-	if( stat_sm_id != -1){
+	stat_sm_id = shmget(IPC_PRIVATE, sizeof(Req_list_node), IPC_CREAT | 0766);
+	if(stat_sm_id != -1){
 		printf("Stat shared mem ID: %d\n",stat_sm_id );
-		stats = (Stats*) shmat(stat_sm_id,NULL,0);
+		rlist = (Req_list) shmat(stat_sm_id,NULL,0);
 	}
 	else
 		perror("Error sm stat!\n");
 
-	if((config_sm_id = shmget(IPC_PRIVATE, sizeof(Config),IPC_CREAT | 0766)) != -1){
+	config_sm_id = shmget(IPC_PRIVATE, sizeof(Config), IPC_CREAT | 0766);
+	if(config_sm_id != -1){
 		printf("Config shared mem ID: %d\n",config_sm_id);
 		config = (Config*) shmat(config_sm_id,NULL,0);
 	}
