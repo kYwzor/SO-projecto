@@ -6,18 +6,17 @@ Config *config;
 Req_list rlist;
 int config_sm_id, stat_sm_id;
 
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-
-void close_server(){
-	pthread_mutex_destroy(&mutex);
-}
-
 void stat_manager(){
+	#if DEBUG
 	printf("Gestor de estatisticas!\n");
+	#endif
 }
 
 void load_conf(){
-	printf("Load Config!\n");
+	#if DEBUG
+	printf("Entrou em load_conf!\n");
+	#endif
+
 	FILE *f;
 	char line[50], aux[50];
 	char *token, **strlist;
@@ -30,7 +29,6 @@ void load_conf(){
 	if(fscanf(f, "SERVERPORT=%d\n", &(config->port))!=1){
 		perror("Error reading port!\n");
 	}
-	printf("Port: %d\n",config->port);
 
 	if(fscanf(f, "SCHEDULING=%s\n", line)!=1){
 		perror("Error reading Scheduling!\n");
@@ -39,12 +37,9 @@ void load_conf(){
 	else if(strcmp(line, "ESTATICO")==0) config->sched=1;
 	else if(strcmp(line, "COMPRIMIDO")==0) config->sched=2;
 
-	printf("Schedule: %d\n",config->sched);
-
 	if(fscanf(f, "THREADPOOL=%d\n", &(config->threadp))!=1){
 		perror("Error reading threadpool!\n");
 	}
-	printf("Threadpool: %d\n",config->threadp);
 
 	if(fscanf(f, "ALLOWED=%s\n", line)!=1){
 		perror("Error reading allowed compressed files");
@@ -66,9 +61,14 @@ void load_conf(){
 		i++;
 	}
 
+	#if DEBUG
+	printf("Port: %d\n",config->port);
+	printf("Schedule: %d\n",config->sched);
+	printf("Threadpool: %d\n",config->threadp);
 	for(i=0; i<count; i++){
 		printf("%s\n", strlist[i]);
 	}
+	#endif
 	//todo: prints de debug com if
 	fclose(f);
 }
@@ -77,7 +77,7 @@ int run_http(){
 	struct sockaddr_in client_name;
 	socklen_t client_name_len = sizeof(client_name);
 	int port, i;
-	Req_list aux = rlist;
+	Req_list aux;
 
 	signal(SIGINT,catch_ctrlc);
 
@@ -105,6 +105,8 @@ int run_http(){
 
 		// Process request
 		get_request(new_conn);
+
+		aux=rlist;
 		while(aux->next!=NULL) aux=aux->next;
 
 	//!!!alocacao dinamica? alocacao memoria partilhada??
@@ -125,6 +127,7 @@ int run_http(){
 		((aux->next)->req)->time_answered=time(NULL);
 
 	//teste:
+		#if DEBUG
 		aux=rlist;
 		i=0;
 		while(aux->next!=NULL){
@@ -132,6 +135,7 @@ int run_http(){
 			printf("Pedido %d: %s, recebido em '%s' tratado em '%s'\n", i, aux->req->page, asctime(gmtime(&(aux->req->time_requested))), asctime(gmtime(&(aux->req->time_answered))));
 			i++;
 		}
+		#endif
 
 		// Terminate connection with client 
 		close(new_conn);
@@ -141,22 +145,32 @@ int run_http(){
 
 void start_stat_process(){
 	pid_t stat_pid;
+
+	#if DEBUG
 	printf("Entrou start_stat_process\n");
+	#endif
+	
 	stat_pid = fork();
 	if(stat_pid == -1){
 		perror("Error while creating stat process");
 	}
 	else if(stat_pid == 0){
+		#if DEBUG
 		printf("Process for statistics created! PID of statistics: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
+		#endif
 		stat_manager();
+		#if DEBUG
 		printf("processo de gestao saiu\n");
+		#endif
 		exit(0);
 	}
-	printf("isto nao pode repetir\n");
 }
 
 void *worker_threads(){
+	#if DEBUG
 	printf("Entrou na worker da thread\n");
+	#endif
+
 	usleep(1000);
 	pthread_exit(NULL);
 }
@@ -166,7 +180,10 @@ void start_threads(){
 	pthread_t threads[size];
 	int id[size];
 
-	printf("entrei no cria threads\n");
+	#if DEBUG
+	printf("entrou start_threads\n");
+	#endif
+
 	for(i = 0 ; i<size ;i++) {
 		id[i] = i;
 		if(pthread_create(&threads[i],NULL,worker_threads,&id[i])==0){
@@ -190,7 +207,9 @@ void start_sm(){
 
 	stat_sm_id = shmget(IPC_PRIVATE, sizeof(Req_list_node), IPC_CREAT | 0766);
 	if(stat_sm_id != -1){
+		#if DEBUG
 		printf("Stat shared mem ID: %d\n",stat_sm_id );
+		#endif
 		rlist = (Req_list) shmat(stat_sm_id,NULL,0);
 	}
 	else
@@ -198,25 +217,21 @@ void start_sm(){
 
 	config_sm_id = shmget(IPC_PRIVATE, sizeof(Config), IPC_CREAT | 0766);
 	if(config_sm_id != -1){
+		#if DEBUG
 		printf("Config shared mem ID: %d\n",config_sm_id);
+		#endif
 		config = (Config*) shmat(config_sm_id,NULL,0);
 	}
 	else
 		perror("Error sm config\n");
 }
 
-
-void setup_server(){
+int main(){
 	start_sm();
 	load_conf();
 	start_stat_process();
 	start_threads();
 	run_http();
 	wait(NULL);
-}
-
-int main(){
-	setup_server();
-	close_server();
 	return 0;
 }
