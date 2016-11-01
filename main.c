@@ -131,14 +131,12 @@ void run_http(){
 		aux=rlist;
 		while(aux->next!=NULL) aux=aux->next;
 
-		/*
-		requests nao sao apenas nome. falta socket e tipo de pedido
-		*/
 		aux->next = (Req_list) malloc(sizeof(Req_list_node));	//Cria nova node
 		(aux->next)->req= (Request*) malloc(sizeof(Request));	//cria request
 		((aux->next)->req)->time_requested=time(NULL);			//timestamp
 		((aux->next)->req)->page=strdup(req_buf);				//guarda pagina pedida
 		((aux->next)->req)->socket=new_conn;					//guarda socket
+		((aux->next)->req)->answered=0;							//nao respondido por esta altura
 
 		if(strstr(req_buf, ".gz")!=NULL)
 			((aux->next)->req)->compressed=1;
@@ -156,6 +154,7 @@ void run_http(){
 			send_page(new_conn);
 
 		((aux->next)->req)->time_answered=time(NULL);
+		((aux->next)->req)->answered=1;
 
 		#if DEBUG
 		aux=rlist;
