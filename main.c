@@ -1,91 +1,113 @@
 #include "header.h"
-#include "simplehttpd.c"
-
-//variaveis globais
-Config *config;
-Req_list rlist;
-int config_sm_id, stat_sm_id;
 
 void stat_manager(){
 	#if DEBUG
-	printf("Gestor de estatisticas!\n");
+	printf("stat_manager: Stat manager started working\n");
 	#endif
+	while(1){
+		#if DEBUG
+		printf("stat_manager: Stat manager still running\n");
+		#endif
+		sleep(5);
+	}
 }
 
 void load_conf(){
 	#if DEBUG
-	printf("Entrou em load_conf!\n");
+	printf("load_conf: Loading configurations from config.txt\n");
 	#endif
 
 	FILE *f;
 	char line[50], aux[50];
-	char *token, **strlist;
-	int count=0, i=0;
+	char *token;
+	int i;
+
+	config = (Config*) malloc(sizeof(Config));
 
 	f = fopen ("config.txt", "r");
 	if(f==NULL){
-		perror("Erro na leitura do ficheiro!\n");
+		perror("Error reading config.txt!\n");
+		exit(1);
 	}
 	if(fscanf(f, "SERVERPORT=%d\n", &(config->port))!=1){
 		perror("Error reading port!\n");
+		exit(1);
 	}
 
 	if(fscanf(f, "SCHEDULING=%s\n", line)!=1){
 		perror("Error reading Scheduling!\n");
+		exit(1);
 	}
-	if(strcmp(line, "NORMAL")==0) config->sched=0;
-	else if(strcmp(line, "ESTATICO")==0) config->sched=1;
-	else if(strcmp(line, "COMPRIMIDO")==0) config->sched=2;
+
+	if(strcmp(line, "NORMAL")==0)
+		config->sched=0;
+	else if(strcmp(line, "ESTATICO")==0)
+		config->sched=1;
+	else if(strcmp(line, "COMPRIMIDO")==0)
+		config->sched=2;
+	else{
+		perror("Type of scheduling not available");
+		exit(1);
+	}
+
 
 	if(fscanf(f, "THREADPOOL=%d\n", &(config->threadp))!=1){
 		perror("Error reading threadpool!\n");
+		exit(1);
 	}
 
-	if(fscanf(f, "ALLOWED=%s\n", line)!=1){
-		perror("Error reading allowed compressed files");
+	if(fscanf(f, "ALLOWED=%s", line)!=1){
+		perror("Error reading allowed compressed files!");
+		exit(1);
 	}
 
 	strcpy(aux, line);
 	token=strtok(aux, ";");
-	while(token != NULL){
-		count++;
+	for(config->nallowed=0; token != NULL; config->nallowed++)
 		token = strtok(NULL, ";");
-	}
 
-	strlist=(char**) malloc(count*sizeof(char*));
+
+	config->allowed=(char**) malloc(config->nallowed*sizeof(char*));
 
 	token=strtok(line, ";");
-	while(token != NULL){
-		strlist[i]=strdup(token);
+	for(i=0; token != NULL; i++){
+		config->allowed[i]=strdup(token);
 		token = strtok(NULL, ";");
-		i++;
 	}
 
+
 	#if DEBUG
+	printf("__________Values read from config.txt__________\n");
 	printf("Port: %d\n",config->port);
-	printf("Schedule: %d\n",config->sched);
+	printf("Scheduling: %s\n",config->sched==0 ? "FIFO" : config->sched==1 ? "Prioritizing static files" : "Prioritizing compressed files");
 	printf("Threadpool: %d\n",config->threadp);
-	for(i=0; i<count; i++){
-		printf("%s\n", strlist[i]);
+	printf("Allowed compressed files (%d files):\n", config->nallowed);
+	for(i=0; i<config->nallowed; i++){
+		printf(" -File %d: %s\n", i, config->allowed[i]);
 	}
+	printf("__________End of values read__________\n");
 	#endif
-	//todo: prints de debug com if
 	fclose(f);
 }
 
-int run_http(){
+void run_http(){
+	#if DEBUG
+	printf("run_http: Starting server\n");
+	#endif
+
 	struct sockaddr_in client_name;
 	socklen_t client_name_len = sizeof(client_name);
 	int port, i;
-	Req_list aux;
+	Req_list rlist, aux;
 
 	signal(SIGINT,catch_ctrlc);
 
+	rlist=(Req_list) malloc(sizeof(Req_list_node));
 	rlist->req=NULL;
 	rlist->next=NULL;
 	rlist->prev=NULL;
 	port=config->port;
-	printf("Listening for HTTP requests on port %d\n",port);
+	printf("run_http: Listening for HTTP requests on port %d\n",port);
 
 	// Configure listening port
 	if ((socket_conn=fireup(port))==-1)
@@ -109,11 +131,20 @@ int run_http(){
 		aux=rlist;
 		while(aux->next!=NULL) aux=aux->next;
 
-	//!!!alocacao dinamica? alocacao memoria partilhada??
-		aux->next = (Req_list) malloc(sizeof(Req_list_node));
-		(aux->next)->req= (Request*) malloc(sizeof(Request));
-		((aux->next)->req)->page=strdup(req_buf);
-		((aux->next)->req)->time_requested=time(NULL);
+		/*
+		requests nao sao apenas nome. falta socket e tipo de pedido
+		*/
+		aux->next = (Req_list) malloc(sizeof(Req_list_node));	//Cria nova node
+		(aux->next)->req= (Request*) malloc(sizeof(Request));	//cria request
+		((aux->next)->req)->time_requested=time(NULL);			//timestamp
+		((aux->next)->req)->page=strdup(req_buf);				//guarda pagina pedida
+		((aux->next)->req)->socket=new_conn;					//guarda socket
+
+		if(strstr(req_buf, ".gz")!=NULL)
+			((aux->next)->req)->compressed=1;
+		else
+			((aux->next)->req)->compressed=0;
+
 		(aux->next)->next=NULL;
 		(aux->next)->prev=aux;
 
@@ -126,13 +157,12 @@ int run_http(){
 
 		((aux->next)->req)->time_answered=time(NULL);
 
-	//teste:
 		#if DEBUG
 		aux=rlist;
 		i=0;
 		while(aux->next!=NULL){
 			aux=aux->next;
-			printf("Pedido %d: %s, recebido em '%s' tratado em '%s'\n", i, aux->req->page, asctime(gmtime(&(aux->req->time_requested))), asctime(gmtime(&(aux->req->time_answered))));
+			printf("Request #%d:\n\tFile: %s\n\tType: %s\n\tSocket: %d\n\tTime requested: %s\tTime answered: %s\n", i, aux->req->page, aux->req->compressed ? "Compressed" : "Not compressed", aux->req->socket, asctime(gmtime(&(aux->req->time_requested))), asctime(gmtime(&(aux->req->time_answered))));
 			i++;
 		}
 		#endif
@@ -143,95 +173,151 @@ int run_http(){
 	}
 }
 
-void start_stat_process(){
-	pid_t stat_pid;
-
+void start_processes(){
 	#if DEBUG
-	printf("Entrou start_stat_process\n");
+	printf("start_processes: Starting 2 processes\n");
 	#endif
+
+	main_pid = fork();
+	if(main_pid == -1){
+		perror("start_processes: Error while creating main process");
+		exit(1);
+	}
+	else if(main_pid == 0){
+		#if DEBUG
+		printf("start_processes: Main process created! Main PID: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
+		#endif
+
+		run_http();
+
+		#if DEBUG
+		printf("start_processes: Main process exited unexpectedly!\n");
+		#endif
+		exit(1);
+	}
 	
 	stat_pid = fork();
 	if(stat_pid == -1){
-		perror("Error while creating stat process");
+		perror("start_processes: Error while creating stat process");
+		exit(1);
 	}
 	else if(stat_pid == 0){
 		#if DEBUG
-		printf("Process for statistics created! PID of statistics: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
+		printf("start_processes: Stats process created! Stats PID: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
 		#endif
+
 		stat_manager();
+
 		#if DEBUG
-		printf("processo de gestao saiu\n");
+		printf("start_processes: Stats process exited unexpectedly!\n");
 		#endif
-		exit(0);
+		exit(1);
 	}
 }
 
-void *worker_threads(){
+void *worker_threads(void *id_ptr){
+	int id = *((int *)id_ptr);
 	#if DEBUG
-	printf("Entrou na worker da thread\n");
+	printf("worker_threads: Thread %d working!\n", id);
 	#endif
-
 	usleep(1000);
 	pthread_exit(NULL);
 }
 
 void start_threads(){
-	int i, size=config->threadp;
-	pthread_t threads[size];
-	int id[size];
-
 	#if DEBUG
-	printf("entrou start_threads\n");
+	printf("start_threads: Starting %d threads\n", config->threadp);
 	#endif
+
+	int i, size=config->threadp;
+
+	threads=(pthread_t*) malloc(size*sizeof(pthread_t));
+	id=(int*) malloc(size*sizeof(int));
 
 	for(i = 0 ; i<size ;i++) {
 		id[i] = i;
 		if(pthread_create(&threads[i],NULL,worker_threads,&id[i])==0){
-			printf("Thread %d criada!\n", i);
-		}
-		else
-			perror("Erro a criar a thread!\n");
-	}
-	//espera pela morte das threads
-	for (i=0;i<size;i++){
-		if(pthread_join(threads[i],NULL) == 0){
-			printf("Thread %d juntou-se\n",id[i]);
+			#if DEBUG
+			printf("start_threads: Created thread #%d\n", i);
+			#endif
 		}
 		else{
-			perror("Erro a juntar threads!\n");
+			perror("start_threads: Error creating threadpool!\n");
+			exit(1);
 		}
 	}
 }
 
 void start_sm(){
+	#if DEBUG
+	printf("start_sm: Starting shared memory\n");
+	#endif
 
-	stat_sm_id = shmget(IPC_PRIVATE, sizeof(Req_list_node), IPC_CREAT | 0766);
+	stat_sm_id = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0777);
 	if(stat_sm_id != -1){
 		#if DEBUG
-		printf("Stat shared mem ID: %d\n",stat_sm_id );
+		printf("start_sm: Stat shared memory created - ID: %d\n",stat_sm_id);
 		#endif
-		rlist = (Req_list) shmat(stat_sm_id,NULL,0);
+		temporario = (int*) shmat(stat_sm_id,NULL,0);
 	}
-	else
-		perror("Error sm stat!\n");
-
-	config_sm_id = shmget(IPC_PRIVATE, sizeof(Config), IPC_CREAT | 0766);
-	if(config_sm_id != -1){
-		#if DEBUG
-		printf("Config shared mem ID: %d\n",config_sm_id);
-		#endif
-		config = (Config*) shmat(config_sm_id,NULL,0);
+	else{
+		perror("start_sm: Error creating shared memory!\n");
+		exit(1);
 	}
-	else
-		perror("Error sm config\n");
 }
 
 int main(){
+	signal(SIGINT, SIG_IGN);
 	start_sm();
 	load_conf();
-	start_stat_process();
+	start_processes();
 	start_threads();
-	run_http();
-	wait(NULL);
+	#if DEBUG
+	printf("main: Waiting for main process to close...\n");
+	#endif
+	waitpid(main_pid, NULL, 0);
+	#if DEBUG
+	printf("main: Main process ended.\n");
+	printf("main: Joining all threads...\n");
+	#endif
+
+		//espera pela morte das threads
+
+	for (int i=0;i<config->threadp;i++){
+		if(pthread_join(threads[i],NULL) == 0){
+			#if DEBUG
+			printf("Thread #%d joined.\n",id[i]);
+			#endif
+		}
+		else{
+			perror("Error joining threads!\n");
+			exit(1);
+		}
+	}
+	#if DEBUG
+	printf("main: All threads joined.\n");
+	printf("main: Killing stat process...\n");
+	#endif
+
+	kill(stat_pid, SIGTERM);
+
+	#if DEBUG
+	printf("main: Stat process killed.\n");
+	printf("main: Deleting shared memory...\n");
+	#endif
+
+	shmdt(temporario);
+	shmctl(stat_sm_id, IPC_RMID, NULL);
+
+	#if DEBUG
+	printf("main: Shared memory deleted.\n");
+	printf("main: Deleting allocated memory (FALTA FAZER)\n");
+	#endif
+
+	//FALTAM TODOS OS FREES!!!!!!!
+
+	#if DEBUG
+	printf("main: Everything is closed! Bye!\n");
+	#endif
 	return 0;
 }
