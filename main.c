@@ -1,6 +1,7 @@
 #include "header.h"
 
 void stat_manager(){
+	signal(SIGINT,SIG_IGN);
 	#if DEBUG
 	printf("stat_manager: Stat manager started working\n");
 	#endif
@@ -172,43 +173,25 @@ void run_http(){
 	}
 }
 
-void start_processes(){
+void start_stat_process(){
 	#if DEBUG
-	printf("start_processes: Starting 2 processes\n");
+	printf("start_stat_process: Starting stat process\n");
 	#endif
 
-	main_pid = fork();
-	if(main_pid == -1){
-		perror("start_processes: Error while creating main process");
-		exit(1);
-	}
-	else if(main_pid == 0){
-		#if DEBUG
-		printf("start_processes: Main process created! Main PID: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
-		#endif
-
-		run_http();
-
-		#if DEBUG
-		printf("start_processes: Main process exited unexpectedly!\n");
-		#endif
-		exit(1);
-	}
-	
 	stat_pid = fork();
 	if(stat_pid == -1){
-		perror("start_processes: Error while creating stat process");
+		perror("start_stat_process: Error while creating stat process");
 		exit(1);
 	}
 	else if(stat_pid == 0){
 		#if DEBUG
-		printf("start_processes: Stats process created! Stats PID: %ld\tPID of the father: %ld\n",(long)getpid(), (long)getppid());
+		printf("start_stat_process: Stats process created! Stats PID: %ld, Father PID: %ld\n",(long)getpid(), (long)getppid());
 		#endif
 
 		stat_manager();
 
 		#if DEBUG
-		printf("start_processes: Stats process exited unexpectedly!\n");
+		printf("start_stat_process: Stats process exited unexpectedly!\n");
 		#endif
 		exit(1);
 	}
@@ -247,6 +230,24 @@ void start_threads(){
 	}
 }
 
+void join_threads(){
+	//espera pela morte das threads
+	for (int i=0;i<config->threadp;i++){
+		if(pthread_join(threads[i],NULL) == 0){
+			#if DEBUG
+			printf("Thread #%d joined.\n",id[i]);
+			#endif
+		}
+		else{
+			perror("Error joining threads!\n");
+			exit(1);
+		}
+	}
+	#if DEBUG
+	printf("join_threads: All threads joined.\n");
+	#endif
+}
+
 void start_sm(){
 	#if DEBUG
 	printf("start_sm: Starting shared memory\n");
@@ -265,58 +266,81 @@ void start_sm(){
 	}
 }
 
-int main(){
-	signal(SIGINT, SIG_IGN);
-	start_sm();
-	load_conf();
-	start_processes();
-	start_threads();
-	#if DEBUG
-	printf("main: Waiting for main process to close...\n");
-	#endif
-	waitpid(main_pid, NULL, 0);
-	#if DEBUG
-	printf("main: Main process ended.\n");
-	printf("main: Joining all threads...\n");
-	#endif
+void free_all_alocations(){
+	int i;
 
-		//espera pela morte das threads
-
-	for (int i=0;i<config->threadp;i++){
-		if(pthread_join(threads[i],NULL) == 0){
-			#if DEBUG
-			printf("Thread #%d joined.\n",id[i]);
-			#endif
-		}
-		else{
-			perror("Error joining threads!\n");
-			exit(1);
-		}
+	//free de todo o buffer
+	Req_list aux;
+	while(rlist!=NULL){
+		free(rlist->req->page);
+		free(rlist->req);
+		aux=rlist->next;
+		free(rlist);
+		rlist=aux;
 	}
+
+	//free do espaco para pthread_t e int que sao usados pelos workers
+	free(threads);
+	free(id);
+
+	//free da configuracao
+	for (i=0; i<config->nallowed; i++){
+		free((config->allowed)[i]);
+	}
+	free(config->allowed);
+	free(config);
+
 	#if DEBUG
-	printf("main: All threads joined.\n");
-	printf("main: Killing stat process...\n");
+	printf("free_all_alocations: All allocations were freed\n");
+	#endif
+}
+
+// Closes socket before closing
+void catch_ctrlc(int sig)
+{
+	printf("\nServer terminating\n");
+	close(socket_conn);
+	#if DEBUG
+	printf("catch_ctrlc: Main process ended.\n");
+	printf("catch_ctrlc: Calling join_threads...\n");
+	#endif
+
+	join_threads();
+
+	#if DEBUG
+	printf("catch_ctrlc: Killing stat process...\n");
 	#endif
 
 	kill(stat_pid, SIGTERM);
 
 	#if DEBUG
-	printf("main: Stat process killed.\n");
-	printf("main: Deleting shared memory...\n");
+	printf("catch_ctrlc: Stat process killed.\n");
+	printf("catch_ctrlc: Deleting shared memory...\n");
 	#endif
 
 	shmdt(temporario);
 	shmctl(stat_sm_id, IPC_RMID, NULL);
 
 	#if DEBUG
-	printf("main: Shared memory deleted.\n");
-	printf("main: Deleting allocated memory (FALTA FAZER)\n");
+	printf("catch_ctrlc: Shared memory deleted.\n");
+	printf("catch_ctrlc: Freeing allocated memory\n");
 	#endif
 
-	//FALTAM TODOS OS FREES!!!!!!!
+	free_all_alocations();
 
 	#if DEBUG
-	printf("main: Everything is closed! Bye!\n");
+	printf("catch_ctrlc: Everything was cleaned! Bye!\n");
 	#endif
+
+	exit(0);
+}
+
+int main(){
+	load_conf();
+	start_sm();
+	start_stat_process();
+	start_threads();
+	run_http();
+	
 	return 0;
 }
