@@ -154,17 +154,20 @@ void run_http(){
 			// Search file with html page and send to client
 			send_page(new_conn);
 
-		((aux->next)->req)->time_answered=time(NULL);
+		//((aux->next)->req)->time_answered=time(NULL);
 		((aux->next)->req)->answered=1;
 
 		#if DEBUG
 		aux=rlist;
 		i=0;
+		printf("run_http: Printing request buffer\n");
+		printf("__________Request buffer__________\n");
 		while(aux->next!=NULL){
 			aux=aux->next;
 			printf("Request #%d:\n\tFile: %s\n\tType: %s\n\tSocket: %d\n\tTime requested: %s\tTime answered: %s\n", i, aux->req->page, aux->req->compressed ? "Compressed" : "Not compressed", aux->req->socket, asctime(gmtime(&(aux->req->time_requested))), asctime(gmtime(&(aux->req->time_answered))));
 			i++;
 		}
+		printf("__________End of buffer__________\n");
 		#endif
 
 		// Terminate connection with client 
@@ -341,6 +344,11 @@ int main(){
 	start_stat_process();
 	start_threads();
 	run_http();
+
+	#if DEBUG
+	printf("main: main process exited unexpectedly!\n");	
+	#endif
+	exit(1);
 	
 	return 0;
 }

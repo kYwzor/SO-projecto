@@ -39,6 +39,8 @@ void *worker_threads();
 void start_threads();
 void join_threads();
 void start_sm();
+void free_all_alocations();
+void catch_ctrlc(int);
 int main();
 
 //functions simplehttpd.c
@@ -50,7 +52,6 @@ void send_header(int socket);
 void send_page(int socket);
 void execute_script(int socket);
 void not_found(int socket);
-void catch_ctrlc(int);
 void cannot_execute(int socket);
 
 
