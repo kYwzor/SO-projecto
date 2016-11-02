@@ -34,9 +34,10 @@
 void stat_manager();
 void load_conf();
 void run_http();
-void start_processes();
+void start_stat_process();
 void *worker_threads();
 void start_threads();
+void join_threads();
 void start_sm();
 int main();
 
@@ -85,12 +86,10 @@ int stat_sm_id;
 int *temporario;				//shared memory
 pthread_t *threads;				//alocacao dinamica
 int *id;						//alocacao dinamica
-pid_t stat_pid, main_pid;
+pid_t stat_pid;
 
 //variaveis globais simplehttpd.c
 char buf[SIZE_BUF];
 char req_buf[SIZE_BUF];
 char buf_tmp[SIZE_BUF];
 int port,socket_conn,new_conn;
-
-//	gcc simplehttpd.c semlib.c -lpthread -D_REENTRANT -Wall -o run
