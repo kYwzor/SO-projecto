@@ -154,7 +154,7 @@ void run_http(){
 			// Search file with html page and send to client
 			send_page(new_conn);
 
-		//((aux->next)->req)->time_answered=time(NULL);
+		((aux->next)->req)->time_answered=time(NULL);
 		((aux->next)->req)->answered=1;
 
 		#if DEBUG
