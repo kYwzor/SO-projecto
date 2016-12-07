@@ -21,7 +21,7 @@ void load_conf(){
 	FILE *f;
 	char line[50], aux[50];
 	char *token;
-	int i;
+	int i, aux_int;
 
 	config = (Config*) malloc(sizeof(Config));
 
@@ -40,17 +40,12 @@ void load_conf(){
 		exit(1);
 	}
 
-	if(strcmp(line, "NORMAL")==0)
-		config->sched=0;
-	else if(strcmp(line, "ESTATICO")==0)
-		config->sched=1;
-	else if(strcmp(line, "COMPRIMIDO")==0)
-		config->sched=2;
-	else{
+	aux_int=get_scheduling_type(line);
+	if(aux_int==-1){
 		perror("Type of scheduling not available");
 		exit(1);
 	}
-
+	config->sched=aux_int;
 
 	if(fscanf(f, "THREADPOOL=%d\n", &(config->threadp))!=1){
 		perror("Error reading threadpool!\n");
@@ -80,7 +75,7 @@ void load_conf(){
 	#if DEBUG
 	printf("__________Values read from config.txt__________\n");
 	printf("Port: %d\n",config->port);
-	printf("Scheduling: %s\n",config->sched==0 ? "FIFO" : config->sched==1 ? "Prioritizing static files" : "Prioritizing compressed files");
+	printf("Scheduling: %s\n",config->sched==0 ? "First in first out" : config->sched==1 ? "Prioritizing static files" : "Prioritizing compressed files");
 	printf("Threadpool: %d\n",config->threadp);
 	printf("Allowed compressed files (%d files):\n", config->nallowed);
 	for(i=0; i<config->nallowed; i++){
@@ -171,6 +166,37 @@ void run_http(){
 		close(new_conn);
 
 	}
+}
+
+void *listen_console(){
+	Message received;
+	int aux;
+	while (1) {
+    	read(fd_pipe, &received, sizeof(Message));
+    	printf("listen_console: Received a command from the console\n");
+
+    	switch(received.type){
+    		case 1:
+    			printf("listen_console: Change to the scheduling type requested\n");
+    			aux = get_scheduling_type(received.value);
+    			if(aux==-1){
+					printf("listen_console: Scheduling type nonexistent. Ignoring command\n");
+					continue;
+				}
+				config->sched=aux;
+				printf("listen_console: Scheduling type set to: %s\n",config->sched==0 ? "First in first out" : config->sched==1 ? "Prioritizing static files" : "Prioritizing compressed files");
+    			break;
+    		case 2:
+    			
+    			break;
+    		case 3:
+    			
+    			break;
+    		default:
+    			printf("listen_console: Received command type not recognised\n");		//should never reach this point
+    			continue;
+    	}
+    }
 }
 
 void start_stat_process(){
@@ -357,6 +383,18 @@ void create_pipe(){
 		perror("Cannot open pipe for reading: ");
 		exit(1);
 	}
+}
+
+
+int get_scheduling_type(char* type){
+	if(strcmp(type, "NORMAL")==0)
+		return 0;
+	else if(strcmp(type, "ESTATICO")==0)
+		return 1;
+	else if(strcmp(type, "COMPRIMIDO")==0)
+		return 2;
+	else
+		return -1;
 }
 
 int main(){
