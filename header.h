@@ -17,6 +17,8 @@
 #include <ctype.h>
 #include <sys/stat.h>
 #include <signal.h>
+#include <fcntl.h>
+#include <errno.h>
 
 // Produce debug information (if 0 no information is shown)
 #define DEBUG	  	1	
@@ -30,33 +32,11 @@
 #define CGI_EXPR	"cgi-bin/"
 #define SIZE_BUF	1024
 
-//functions main.c
-void stat_manager();
-void load_conf();
-void run_http();
-void start_stat_process();
-void *worker_threads();
-void start_threads();
-void join_threads();
-void start_sm();
-void free_all_alocations();
-void catch_ctrlc(int);
-int main();
-
-//functions simplehttpd.c
-int  fireup(int port);
-void identify(int socket);
-void get_request(int socket);
-int  read_line(int socket, int n);
-void send_header(int socket);
-void send_page(int socket);
-void execute_script(int socket);
-void not_found(int socket);
-void cannot_execute(int socket);
-
+// Pipe name
+#define PIPE_NAME   "pipe_console"
 
 //structs
-typedef struct config{
+typedef struct config_struct{
 	int port;					//port definida em config.txt
 	int sched;					//0->Scheduling FIFO, 1->Prioridade páginas estáticas, 2->Prioridade páginas comprimidas
 	int threadp;				//numero de threads criadas
@@ -64,7 +44,7 @@ typedef struct config{
 	char** allowed;				//lista de ficheiros permitidos (alocacao dinamica)
 }Config;
 
-typedef struct request{
+typedef struct request_struct{
 	char *page;					//exemplo: "index.html" (alocacao dinamica)
 	int compressed;				//compressed=1 -> pedido de pagina comprimida
 	int socket;					//guarda socket do pedido		
@@ -80,6 +60,34 @@ typedef struct lnode_req{
 	Req_list prev;
 }Req_list_node;
 
+typedef struct msg_struct{
+	int type;
+	char value[SIZE_BUF];
+}Message;
+
+//functions main.c
+void stat_manager();
+void load_conf();
+void run_http();
+void start_stat_process();
+void *worker_threads();
+void start_threads();
+void join_threads();
+void start_sm();
+void free_all_alocations();
+void catch_ctrlc(int);
+
+//functions simplehttpd.c
+int  fireup(int port);
+void identify(int socket);
+void get_request(int socket);
+int  read_line(int socket, int n);
+void send_header(int socket);
+void send_page(int socket);
+void execute_script(int socket);
+void not_found(int socket);
+void cannot_execute(int socket);
+
 //variaveis globais main.c
 Config *config;					//alocacao dinamica
 Req_list rlist;					//alocacao dinamica
@@ -88,6 +96,7 @@ int *temporario;				//shared memory
 pthread_t *threads;				//alocacao dinamica
 int *id;						//alocacao dinamica
 pid_t stat_pid;
+int fd_pipe;
 
 //variaveis globais simplehttpd.c
 char buf[SIZE_BUF];

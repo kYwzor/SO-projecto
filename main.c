@@ -99,14 +99,10 @@ void run_http(){
 	struct sockaddr_in client_name;
 	socklen_t client_name_len = sizeof(client_name);
 	int port, i;
-	Req_list rlist, aux;
+	Req_list aux;
 
 	signal(SIGINT,catch_ctrlc);
 
-	rlist=(Req_list) malloc(sizeof(Req_list_node));
-	rlist->req=NULL;
-	rlist->next=NULL;
-	rlist->prev=NULL;
 	port=config->port;
 	printf("run_http: Listening for HTTP requests on port %d\n",port);
 
@@ -117,6 +113,7 @@ void run_http(){
 	// Serve requests 
 	while (1)
 	{
+
 		// Accept connection on socket
 		if ( (new_conn = accept(socket_conn,(struct sockaddr *)&client_name,&client_name_len)) == -1 ) {
 			printf("Error accepting connection\n");
@@ -274,6 +271,9 @@ void free_all_alocations(){
 
 	//free de todo o buffer
 	Req_list aux;
+	aux=rlist->next;
+	free(rlist);
+	rlist=aux;
 	while(rlist!=NULL){
 		free(rlist->req->page);
 		free(rlist->req);
@@ -338,11 +338,34 @@ void catch_ctrlc(int sig)
 	exit(0);
 }
 
+void create_buffer(){
+	rlist=(Req_list) malloc(sizeof(Req_list_node));
+	rlist->req=NULL;
+	rlist->next=NULL;
+	rlist->prev=NULL;
+}
+
+void create_pipe(){
+    // Creates the named pipe if it doesn't exist yet
+	if ((mkfifo(PIPE_NAME, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)){
+		perror("Error creating pipe\n");
+		exit(1);
+	}
+
+    // Opens the pipe for reading
+	if((fd_pipe=open(PIPE_NAME, O_RDWR)) < 0){
+		perror("Cannot open pipe for reading: ");
+		exit(1);
+	}
+}
+
 int main(){
 	load_conf();
 	start_sm();
 	start_stat_process();
 	start_threads();
+	create_buffer();
+	create_pipe();
 	run_http();
 
 	#if DEBUG
