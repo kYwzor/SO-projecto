@@ -215,27 +215,28 @@ void *listen_console(){
 					}
 					token = strtok(NULL, ";");
 				}
-				printf("passei aqui\n");
 
 				if(flag){
 					printf("listen_console: Invalid file names. Ignoring command.\n");
 					continue;
 				}
-				printf("passei aqui1\n");
+
 				free_allowed_files_array();
 				config->nallowed=aux;
 				config->allowed=(char**) malloc(config->nallowed*sizeof(char*));
-				printf("passei aqui2\n");
+
 				token=strtok(received.value, ";");
 				for(i=0; token != NULL; i++){
 					config->allowed[i]=strdup(token);
 					token = strtok(NULL, ";");
 				}
+
 				printf("listen_console: %d files allowed: ", config->nallowed);
 				for(i=0; i<config->nallowed; i++){
 					printf("%s;", config->allowed[i]);
 				}
 				printf("\n");
+				
     			break;
     		default:
     			printf("listen_console: Received command type not recognised. Ignoring command.\n");		//should never reach this point
