@@ -1,7 +1,7 @@
 #include "header.h"
+#include "functions.h"
 
 void stat_manager(){
-	signal(SIGINT,SIG_IGN);
 	#if DEBUG
 	printf("stat_manager: Stat manager started working\n");
 	#endif
@@ -9,7 +9,7 @@ void stat_manager(){
 		#if DEBUG
 		printf("stat_manager: Stat manager still running\n");
 		#endif
-		sleep(5);
+		sleep(20);
 	}
 }
 
@@ -96,8 +96,6 @@ void run_http(){
 	int port, i;
 	Req_list aux;
 
-	signal(SIGINT,catch_ctrlc);
-
 	port=config->port;
 	printf("run_http: Listening for HTTP requests on port %d\n",port);
 
@@ -170,30 +168,77 @@ void run_http(){
 
 void *listen_console(){
 	Message received;
-	int aux;
+	int aux,i;
+	int flag;
+	char str_aux[SIZE_BUF];
+	char* token;
 	while (1) {
     	read(fd_pipe, &received, sizeof(Message));
     	printf("listen_console: Received a command from the console\n");
 
     	switch(received.type){
     		case 1:
-    			printf("listen_console: Change to the scheduling type requested\n");
+    			printf("listen_console: Console requested a change to the scheduling type.\n");
     			aux = get_scheduling_type(received.value);
     			if(aux==-1){
-					printf("listen_console: Scheduling type nonexistent. Ignoring command\n");
+					printf("listen_console: Scheduling type received nonexistent. Ignoring command.\n");
 					continue;
 				}
 				config->sched=aux;
-				printf("listen_console: Scheduling type set to: %s\n",config->sched==0 ? "First in first out" : config->sched==1 ? "Prioritizing static files" : "Prioritizing compressed files");
+				printf("listen_console: Scheduling type set to: '%s\n'.",config->sched==0 ? "First in first out" : config->sched==1 ? "Prioritizing static files" : "Prioritizing compressed files");
     			break;
     		case 2:
-    			
+    			printf("listen_console: Console requested a change to the threadpool\n");
+    			aux=string_to_int(received.value);
+    			if(aux==0){
+    				printf("listen_console: Threadpool size can't be 0. Ignoring command.\n");
+    				continue;
+    			}
+    			else if(aux<0){
+    				printf("listen_console: Threadpool size received is not valid. Ignoring command.\n");
+    				continue;
+    			}
+    			config->threadp=aux;
+    			printf("listen_console: Threadpool size set to %d.\n", aux);
     			break;
     		case 3:
-    			
+    			printf("listen_console: Console requested a change to the allowed compressed files.\n");
+				
+				strcpy(str_aux, received.value);
+				flag=0;
+				token=strtok(str_aux, ";");
+				for(aux=0; token != NULL; aux++){
+					i=strlen(token);
+					if(strcmp(token+i-3, ".gz")!=0){
+						flag=1;
+						break;
+					}
+					token = strtok(NULL, ";");
+				}
+				printf("passei aqui\n");
+
+				if(flag){
+					printf("listen_console: Invalid file names. Ignoring command.\n");
+					continue;
+				}
+				printf("passei aqui1\n");
+				free_allowed_files_array();
+				config->nallowed=aux;
+				config->allowed=(char**) malloc(config->nallowed*sizeof(char*));
+				printf("passei aqui2\n");
+				token=strtok(received.value, ";");
+				for(i=0; token != NULL; i++){
+					config->allowed[i]=strdup(token);
+					token = strtok(NULL, ";");
+				}
+				printf("listen_console: %d files allowed: ", config->nallowed);
+				for(i=0; i<config->nallowed; i++){
+					printf("%s;", config->allowed[i]);
+				}
+				printf("\n");
     			break;
     		default:
-    			printf("listen_console: Received command type not recognised\n");		//should never reach this point
+    			printf("listen_console: Received command type not recognised. Ignoring command.\n");		//should never reach this point
     			continue;
     	}
     }
@@ -236,8 +281,17 @@ void start_threads(){
 	#if DEBUG
 	printf("start_threads: Starting %d threads\n", config->threadp);
 	#endif
-
 	int i, size=config->threadp;
+
+	if(pthread_create(&pipe_thread,NULL,listen_console,NULL)==0){
+		#if DEBUG
+		printf("start_threads: Created pipe thread\n");
+		#endif
+	}
+	else{
+		perror("start_threads: Error creating pipe thread!\n");
+		exit(1);
+	}
 
 	threads=(pthread_t*) malloc(size*sizeof(pthread_t));
 	id=(int*) malloc(size*sizeof(int));
@@ -292,9 +346,16 @@ void start_sm(){
 	}
 }
 
-void free_all_alocations(){
+void free_allowed_files_array(){
 	int i;
 
+	for (i=0; i<config->nallowed; i++){
+		free((config->allowed)[i]);
+	}
+	free(config->allowed);
+}
+
+void free_all_alocations(){
 	//free de todo o buffer
 	Req_list aux;
 	aux=rlist->next;
@@ -313,10 +374,7 @@ void free_all_alocations(){
 	free(id);
 
 	//free da configuracao
-	for (i=0; i<config->nallowed; i++){
-		free((config->allowed)[i]);
-	}
-	free(config->allowed);
+	free_allowed_files_array();
 	free(config);
 
 	#if DEBUG
@@ -386,24 +444,15 @@ void create_pipe(){
 }
 
 
-int get_scheduling_type(char* type){
-	if(strcmp(type, "NORMAL")==0)
-		return 0;
-	else if(strcmp(type, "ESTATICO")==0)
-		return 1;
-	else if(strcmp(type, "COMPRIMIDO")==0)
-		return 2;
-	else
-		return -1;
-}
-
 int main(){
+	signal(SIGINT,SIG_IGN);
 	load_conf();
 	start_sm();
 	start_stat_process();
+	create_pipe();
 	start_threads();
 	create_buffer();
-	create_pipe();
+	signal(SIGINT,catch_ctrlc);
 	run_http();
 
 	#if DEBUG

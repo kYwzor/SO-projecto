@@ -69,13 +69,17 @@ typedef struct msg_struct{
 void stat_manager();
 void load_conf();
 void run_http();
+void *listen_console();
 void start_stat_process();
 void *worker_threads();
 void start_threads();
 void join_threads();
 void start_sm();
+void free_allowed_files_array();
 void free_all_alocations();
 void catch_ctrlc(int);
+void create_buffer();
+void create_pipe();
 
 //functions simplehttpd.c
 int  fireup(int port);
@@ -94,6 +98,7 @@ Req_list rlist;					//alocacao dinamica
 int stat_sm_id;
 int *temporario;				//shared memory
 pthread_t *threads;				//alocacao dinamica
+pthread_t pipe_thread;
 int *id;						//alocacao dinamica
 pid_t stat_pid;
 int fd_pipe;
