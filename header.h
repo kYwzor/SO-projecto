@@ -45,12 +45,12 @@ typedef struct config_struct{
 }Config;
 
 typedef struct request_struct{
-	char *page;					//exemplo: "index.html" (alocacao dinamica)
+	char page[SIZE_BUF];		//exemplo: "index.html"
 	int compressed;				//compressed=1 -> pedido de pagina comprimida
 	int socket;					//guarda socket do pedido		
 	time_t time_requested;		//timestamp request
-	int answered;				//0->not answered / 1->answered
-	time_t time_answered;		//timestamp answer -- only check if answered = 1
+	time_t time_answered;		//timestamp answer
+	int read;					//0->not answered / 1->answered
 }Request;
 
 typedef struct lnode_req *Req_list;
@@ -96,12 +96,15 @@ void cannot_execute(int socket);
 Config *config;					//alocacao dinamica
 Req_list rlist;					//alocacao dinamica
 int stat_sm_id;
-int *temporario;				//shared memory
 pthread_t *threads;				//alocacao dinamica
 pthread_t pipe_thread;
+pthread_t scheduler_thread;
 int *id;						//alocacao dinamica
 pid_t stat_pid;
 int fd_pipe;
+int exit_thread_flag;
+Request *next_request;			//alocacao dinamica em rlist
+Request *shared_request;		//shared memory
 
 //variaveis globais simplehttpd.c
 char buf[SIZE_BUF];
