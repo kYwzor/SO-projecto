@@ -1,3 +1,4 @@
+#include "functions.h"
 #include "header.h"
 
 void remove_enter(char* str){

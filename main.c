@@ -31,28 +31,28 @@ void load_conf(){
 
 	f = fopen ("config.txt", "r");
 	if(f==NULL){
-		perror("Error reading config.txt!\n");
+		perror("Error reading config.txt!");
 		exit(1);
 	}
 	if(fscanf(f, "SERVERPORT=%d\n", &(config->port))!=1){
-		perror("Error reading port!\n");
+		perror("Error reading port!");
 		exit(1);
 	}
 
 	if(fscanf(f, "SCHEDULING=%s\n", line)!=1){
-		perror("Error reading Scheduling!\n");
+		perror("Error reading Scheduling!");
 		exit(1);
 	}
 
 	aux_int=get_scheduling_type(line);
 	if(aux_int==-1){
-		perror("Type of scheduling not available");
+		printf("Type of scheduling not available\n");
 		exit(1);
 	}
 	config->sched=aux_int;
 
 	if(fscanf(f, "THREADPOOL=%d\n", &(config->threadp))!=1){
-		perror("Error reading threadpool!\n");
+		perror("Error reading threadpool!");
 		exit(1);
 	}
 
@@ -97,16 +97,19 @@ void run_http(){
 
 	struct sockaddr_in client_name;
 	socklen_t client_name_len = sizeof(client_name);
-	int port;
+	int port, new_conn;
 	Req_list aux;
 	Request* new_req;
+	char req_buf[SIZE_BUF];
 
 	port=config->port;
 	printf("run_http: Listening for HTTP requests on port %d\n",port);
 
 	// Configure listening port
-	if ((socket_conn=fireup(port))==-1)
+	if ((socket_conn=fireup(port))==-1){
+		printf("run_http: fireup failed! Exiting process.\n");
 		exit(1);
+	}
 
 	// Serve requests 
 	while (1)
@@ -114,7 +117,7 @@ void run_http(){
 
 		// Accept connection on socket
 		if ( (new_conn = accept(socket_conn,(struct sockaddr *)&client_name,&client_name_len)) == -1 ) {
-			printf("Error accepting connection\n");
+			printf("run_http: Error accepting connection\n");
 			exit(1);
 		}
 
@@ -122,15 +125,17 @@ void run_http(){
 		identify(new_conn);
 
 		// Process request
-		get_request(new_conn);
+		get_request(req_buf, new_conn);
 
 		new_req = (Request*) malloc(sizeof(Request));			//cria request
 		new_req->time_requested=time(NULL);						//timestamp
 
+		//Mutexes???
 		strcpy(new_req->page, req_buf);							//guarda pagina pedida
+
 		new_req->socket=new_conn;								//guarda socket
 		new_req->read=0;										//nao lido por esta altura
-		if(strstr(req_buf, ".gz")!=NULL)						//verifica se e comprimido
+		if(strstr(new_req->page, ".gz")!=NULL)					//verifica se e comprimido
 			new_req->compressed=1;
 		else
 			new_req->compressed=0;
@@ -156,17 +161,21 @@ void run_http(){
 //		}
 //		printf("__________End of buffer__________\n");
 //		#endif
-
-		// Terminate connection with client 
-		//close(new_conn);
-
 	}
 }
 void *worker_threads(void *id_ptr){
 	int id = *((int *)id_ptr);
+	char page[SIZE_BUF];
+	int compressed;
+	int socket;
+	time_t time_requested;
+	time_t time_answered;
+	int read;
+
 	#if DEBUG
 	printf("worker_threads: Thread %d working!\n", id);
 	#endif
+
 	while(1){
 		pthread_mutex_lock(&request_mutex);
 		while(next_request==NULL){
@@ -179,26 +188,38 @@ void *worker_threads(void *id_ptr){
 		}
 		printf("worker_threads: Thread %d received a request!\n", id);
 
-		// Verify if request is for a page or script
-		if(!strncmp(next_request->page,CGI_EXPR,strlen(CGI_EXPR)))
-			execute_script(next_request->socket);	
-		else
-			// Search file with html page and send to client
-			send_page(next_request->socket);
-
-		//MUTEXES COM SHARED MEMORY!!!!!
-		strcpy(shared_request->page, next_request->page);
-		shared_request->compressed = next_request->compressed;
-		shared_request->socket = next_request->socket;
-		shared_request->time_requested = next_request->time_requested;
-		shared_request->read = next_request->read;
-		next_request->time_answered=time(NULL);
-
-		close(next_request->socket);
+		strcpy(page, next_request->page);
+		compressed = next_request->compressed;
+		socket = next_request->socket;
+		time_requested = next_request->time_requested;
+		read = next_request->read;
 
 		//free all request stuff before setting it to NULL!!!!
+		free(next_request);
 		next_request=NULL;
 		pthread_mutex_unlock(&request_mutex);
+
+		// Verify if request is for a page or script
+		if(!strncmp(page,CGI_EXPR,strlen(CGI_EXPR)))
+			execute_script(socket);	
+		else
+			// Search file with html page and send to client
+			send_page(page,socket);
+
+		// Terminate connection with client 
+		close(socket);
+		time_answered=time(NULL);
+
+
+		//MUTEXES COM SHARED MEMORY!!!!!
+		strcpy(shared_request->page, page);
+		shared_request->compressed = compressed;
+		shared_request->socket = socket;
+		shared_request->time_requested = time_requested;
+		shared_request->read = read;
+		shared_request->time_answered = time_answered;
+
+
 		if(exit_thread_flag==1){
 			pthread_exit(NULL);
 		}
@@ -216,7 +237,13 @@ void *scheduler(){
 			switch(config->sched){
 				case 0:
 					pthread_mutex_lock(&request_mutex);
+					if(next_request!=NULL){
+						pthread_cond_signal(&cond_var);
+						pthread_mutex_unlock(&request_mutex);
+						break;
+					}
 					next_request=aux->req;
+					printf("scheduler: Next request is %s from socket %d.\n", next_request->page, next_request->socket);
 					pthread_cond_signal(&cond_var);
 					pthread_mutex_unlock(&request_mutex);
 
@@ -228,6 +255,7 @@ void *scheduler(){
 						next_aux->prev = prev_aux;
 
 					free(aux);
+					printf("scheduler: Deleted request from buffer.\n");
 
 					break;
 
@@ -353,9 +381,8 @@ void start_stat_process(){
 
 		stat_manager();
 
-		#if DEBUG
-		printf("start_stat_process: Stats process exited unexpectedly!\n");
-		#endif
+
+		printf("start_stat_process: Stats process exited unexpectedly!\n");		//should never reach this point
 		exit(1);
 	}
 }
@@ -365,6 +392,7 @@ void start_threads(){
 	printf("start_threads: Starting %d threads\n", config->threadp);
 	#endif
 	int i, size=config->threadp;
+	Thread_list aux, new;
 
 	exit_thread_flag=0;
 
@@ -374,7 +402,7 @@ void start_threads(){
 		#endif
 	}
 	else{
-		perror("start_threads: Error creating pipe thread!\n");
+		perror("start_threads: Error creating pipe thread!");
 		exit(1);
 	}
 
@@ -384,58 +412,75 @@ void start_threads(){
 		#endif
 	}
 	else{
-		perror("start_threads: Error creating scheduler thread!\n");
+		perror("start_threads: Error creating scheduler thread!");
 		exit(1);
 	}
 
-	threads=(pthread_t*) malloc(size*sizeof(pthread_t));
-	id=(int*) malloc(size*sizeof(int));
+	threads = (Thread_list) malloc(sizeof(Thread_list_node));
+	threads->id=-1;
+	threads->next=NULL;
+	threads->prev=NULL;
 
+	aux=threads;
 	for(i=0; i<size; i++){
-		id[i] = i;
-		if(pthread_create(&threads[i],NULL,worker_threads,&id[i])==0){
+		new = (Thread_list) malloc(sizeof(Thread_list_node));
+		new->id = i;
+		new->next = NULL;
+		new->prev = aux;
+		aux->next = new;
+
+		if(pthread_create(&new->thread,NULL,worker_threads,&new->id)==0){
 			#if DEBUG
 			printf("start_threads: Created thread #%d\n", i);
 			#endif
 		}
 		else{
-			perror("start_threads: Error creating threadpool!\n");
+			perror("start_threads: Error creating threadpool!");
 			exit(1);
 		}
+
+		aux = new;
 	}
 }
 
 void join_threads(){
 	//espera pela morte das threads
+	int i;
+	Thread_list aux;
+
 	exit_thread_flag=1;
+
 	if(pthread_join(pipe_thread,NULL) == 0){
 			#if DEBUG
-			printf("Pipe thread joined.\n");
+			printf("join_threads: Pipe thread joined.\n");
 			#endif
 	}
 	else{
-		perror("Error joining pipe thread!\n");
+		perror("join_threads: Error joining pipe thread!");
 		exit(1);
 	}
 
 	if(pthread_join(scheduler_thread,NULL) == 0){
 			#if DEBUG
-			printf("Scheduler thread joined.\n");
+			printf("join_threads: Scheduler thread joined.\n");
 			#endif
 	}
 	else{
-		perror("Error joining scheduler thread!\n");
+		perror("join_threads: Error joining scheduler thread!");
 		exit(1);
 	}
+
 	pthread_cond_broadcast(&cond_var);
-	for (int i=0;i<config->threadp;i++){
-		if(pthread_join(threads[i],NULL) == 0){
+	aux=threads;
+	for (i=0;i<config->threadp;i++){
+		aux=aux->next;
+		if(pthread_join(aux->thread,NULL) == 0){
 			#if DEBUG
-			printf("Thread #%d joined.\n",id[i]);
+			printf("join_threads: Thread #%d joined.\n",aux->id);
 			#endif
 		}
 		else{
-			perror("Error joining threads!\n");
+			perror("join_threads: Error joining threads!");
 			exit(1);
 		}
 	}
@@ -457,7 +502,7 @@ void start_sm(){
 		shared_request = (Request*) shmat(stat_sm_id,NULL,0);
 	}
 	else{
-		perror("start_sm: Error creating shared memory!\n");
+		perror("start_sm: Error creating shared memory!");
 		exit(1);
 	}
 }
@@ -471,22 +516,24 @@ void free_allowed_files_array(){
 	free(config->allowed);
 }
 
-void free_all_alocations(){
+void free_all_allocations(){
 	//free de todo o buffer
-	Req_list aux;
-	aux=rlist->next;
-	free(rlist);
-	rlist=aux;
+	Req_list aux_r;
+	Thread_list aux_t;
+
 	while(rlist!=NULL){
 		free(rlist->req);
-		aux=rlist->next;
+		aux_r=rlist->next;
 		free(rlist);
-		rlist=aux;
+		rlist=aux_r;
 	}
 
 	//free do espaco para pthread_t e int que sao usados pelos workers
-	free(threads);
-	free(id);
+	while(threads!=NULL){
+		aux_t=threads->next;
+		free(threads);
+		threads=aux_t;
+	}
 
 	//free da configuracao
 	free_allowed_files_array();
@@ -528,7 +575,7 @@ void catch_ctrlc(int sig)
 	printf("catch_ctrlc: Freeing allocated memory\n");
 	#endif
 
-	free_all_alocations();
+	free_all_allocations();
 
 	#if DEBUG
 	printf("catch_ctrlc: Everything was cleaned! Bye!\n");
@@ -547,13 +594,13 @@ void create_buffer(){
 void create_pipe(){
     // Creates the named pipe if it doesn't exist yet
 	if ((mkfifo(PIPE_NAME, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)){
-		perror("Error creating pipe\n");
+		perror("create_pipe: Error creating pipe");
 		exit(1);
 	}
 
     // Opens the pipe for reading
 	if((fd_pipe=open(PIPE_NAME, O_RDWR)) < 0){
-		perror("Cannot open pipe for reading: ");
+		perror("create_pipe: Cannot open pipe for reading");
 		exit(1);
 	}
 }

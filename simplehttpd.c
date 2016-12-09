@@ -8,13 +8,14 @@
 #include "header.h"
 
 // Processes request from client
-void get_request(int socket)
+void get_request(char* req_buf, int socket)
 {
+	char buf[SIZE_BUF];
 	int i,j;
 	int found_get;
 
 	found_get=0;
-	while ( read_line(socket,SIZE_BUF) > 0 ) {
+	while ( read_line(buf,socket,SIZE_BUF) > 0 ) {
 		if(!strncmp(buf,GET_EXPR,strlen(GET_EXPR))) {
 			// GET received, extract the requested page/script
 			found_get=1;
@@ -28,7 +29,7 @@ void get_request(int socket)
 
 	// Currently only supports GET 
 	if(!found_get) {
-		printf("Request from client without a GET\n");
+		printf("get_request: Request from client without a GET. Not supported! Exiting process\n");
 		exit(1);
 	}
 	// If no particular page is requested then we consider htdocs/index.html
@@ -46,18 +47,29 @@ void get_request(int socket)
 // Send message header (before html page) to client
 void send_header(int socket)
 {
+	char buf[SIZE_BUF];
 	#if DEBUG
 	printf("send_header: sending HTTP header to client\n");
 	#endif
 	sprintf(buf,HEADER_1);
-	send(socket,buf,strlen(HEADER_1),0);
+	if((send(socket,buf,strlen(HEADER_1),MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("send_header: Error sending HEADER_1");
+		exit(1);
+	}
 	sprintf(buf,SERVER_STRING);
-	send(socket,buf,strlen(SERVER_STRING),0);
+	if((send(socket,buf,strlen(SERVER_STRING),MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("send_header: Error sending SERVER_STRING");
+		exit(1);
+	}
 	sprintf(buf,HEADER_2);
-	send(socket,buf,strlen(HEADER_2),0);
+	if((send(socket,buf,strlen(HEADER_2),MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("send_header: Error sending HEADER_2");
+		exit(1);
+	}
 
 	return;
 }
+
 
 
 // Execute script in /cgi-bin
@@ -71,12 +83,13 @@ void execute_script(int socket)
 
 
 // Send html page to client
-void send_page(int socket)
+void send_page(char* page, int socket)
 {
 	FILE * fp;
+	char buf_tmp[SIZE_BUF];
 
 	// Searchs for page in directory htdocs
-	sprintf(buf_tmp,"htdocs/%s",req_buf);
+	sprintf(buf_tmp,"htdocs/%s",page);
 
 	#if DEBUG
 	printf("send_page: searching for %s\n",buf_tmp);
@@ -96,7 +109,10 @@ void send_page(int socket)
 
 		printf("send_page: sending page %s to client\n",buf_tmp);
 		while(fgets(buf_tmp,SIZE_BUF,fp))
-			send(socket,buf_tmp,strlen(buf_tmp),0);
+			if((send(socket,buf_tmp,strlen(buf_tmp),MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+				perror("send_page: Error sending page line");
+				exit(1);	
+			}
 		
 		// Close file
 		fclose(fp);
@@ -131,7 +147,7 @@ void identify(int socket)
 
 
 // Reads a line (of at most 'n' bytes) from socket
-int read_line(int socket,int n) 
+int read_line(char* buf, int socket,int n) 
 { 
 	int n_read;
 	int not_eol; 
@@ -144,7 +160,7 @@ int read_line(int socket,int n)
 	while (n_read<n && not_eol) {
 		ret = read(socket,&new_char,sizeof(char));
 		if (ret == -1) {
-			printf("Error reading from socket (read_line)");
+			perror("read_line: Error reading from socket");
 			return -1;
 		}
 		else if (ret == 0) {
@@ -153,7 +169,10 @@ int read_line(int socket,int n)
 		else if (new_char=='\r') {
 			not_eol = 0;
 			// consumes next byte on buffer (LF)
-			read(socket,&new_char,sizeof(char));
+			if(read(socket,&new_char,sizeof(char))==-1){
+				perror("read_line: Error reading from socket");
+				return -1;
+			}
 			continue;
 		}		
 		else {
@@ -179,7 +198,7 @@ int fireup(int port)
 
 	// Creates socket
 	if ((new_sock = socket(PF_INET, SOCK_STREAM, 0))==-1) {
-		printf("Error creating socket\n");
+		printf("fireup: Error creating socket\n");
 		return -1;
 	}
 
@@ -188,13 +207,13 @@ int fireup(int port)
  	name.sin_port = htons(port);
  	name.sin_addr.s_addr = htonl(INADDR_ANY);
 	if (bind(new_sock, (struct sockaddr *)&name, sizeof(name)) < 0) {
-		printf("Error binding to socket\n");
+		printf("fireup: Error binding to socket\n");
 		return -1;
 	}
 
 	// Starts listening on socket
  	if (listen(new_sock, 5) < 0) {
-		printf("Error listening to socket\n");
+		printf("fireup: Error listening to socket\n");
 		return -1;
 	}
  
@@ -205,20 +224,42 @@ int fireup(int port)
 // Sends a 404 not found status message to client (page not found)
 void not_found(int socket)
 {
+	char buf[SIZE_BUF];
  	sprintf(buf,"HTTP/1.0 404 NOT FOUND\r\n");
-	send(socket,buf, strlen(buf), 0);
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 404");
+		exit(1);
+	}
 	sprintf(buf,SERVER_STRING);
-	send(socket,buf, strlen(buf), 0);
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 404");
+		exit(1);
+	}
 	sprintf(buf,"Content-Type: text/html\r\n");
-	send(socket,buf, strlen(buf), 0);
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 404");
+		exit(1);
+	}
 	sprintf(buf,"\r\n");
-	send(socket,buf, strlen(buf), 0);
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 404");
+		exit(1);
+	}
 	sprintf(buf,"<HTML><TITLE>Not Found</TITLE>\r\n");
-	send(socket,buf, strlen(buf), 0);
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 404");
+		exit(1);
+	}
 	sprintf(buf,"<BODY><P>Resource unavailable or nonexistent.\r\n");
-	send(socket,buf, strlen(buf), 0);
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 404");
+		exit(1);
+	}
 	sprintf(buf,"</BODY></HTML>\r\n");
-	send(socket,buf, strlen(buf), 0);
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 404");
+		exit(1);
+	}
 
 	return;
 }
@@ -227,14 +268,27 @@ void not_found(int socket)
 // Send a 5000 internal server error (script not configured for execution)
 void cannot_execute(int socket)
 {
+	char buf[SIZE_BUF];
 	sprintf(buf,"HTTP/1.0 500 Internal Server Error\r\n");
-	send(socket,buf, strlen(buf), 0);
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 5000 internal server error");
+		exit(1);
+	}
 	sprintf(buf,"Content-type: text/html\r\n");
-	send(socket,buf, strlen(buf), 0);
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 5000 internal server error");
+		exit(1);
+	}
 	sprintf(buf,"\r\n");
-	send(socket,buf, strlen(buf), 0);
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 5000 internal server error");
+		exit(1);
+	}
 	sprintf(buf,"<P>Error prohibited CGI execution.\r\n");
-	send(socket,buf, strlen(buf), 0);
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 5000 internal server error");
+		exit(1);
+	}
 
 	return;
 }

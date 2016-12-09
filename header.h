@@ -60,7 +60,15 @@ typedef struct lnode_req{
 	Req_list prev;
 }Req_list_node;
 
-typedef struct msg_struct{
+typedef struct lnode_thread *Thread_list;
+typedef struct lnode_thread{
+	pthread_t thread;
+	int id;
+	Thread_list next;
+	Thread_list prev;
+}Thread_list_node;
+
+typedef struct msg_struct{		//Mensagens da consola
 	int type;
 	char value[SIZE_BUF];
 }Message;
@@ -84,30 +92,28 @@ void create_pipe();
 //functions simplehttpd.c
 int  fireup(int port);
 void identify(int socket);
-void get_request(int socket);
-int  read_line(int socket, int n);
+void get_request(char* req_buf, int socket);
+int  read_line(char* buf, int socket, int n);
 void send_header(int socket);
-void send_page(int socket);
+void send_page(char* page, int socket);
 void execute_script(int socket);
 void not_found(int socket);
 void cannot_execute(int socket);
 
 //variaveis globais main.c
+int socket_conn;
+
 Config *config;					//alocacao dinamica
 Req_list rlist;					//alocacao dinamica
+Request *next_request;			//alocacao dinamica em rlist
+
 int stat_sm_id;
-pthread_t *threads;				//alocacao dinamica
+Request *shared_request;		//shared memory
+
+Thread_list threads;
 pthread_t pipe_thread;
 pthread_t scheduler_thread;
-int *id;						//alocacao dinamica
+
 pid_t stat_pid;
 int fd_pipe;
 int exit_thread_flag;
-Request *next_request;			//alocacao dinamica em rlist
-Request *shared_request;		//shared memory
-
-//variaveis globais simplehttpd.c
-char buf[SIZE_BUF];
-char req_buf[SIZE_BUF];
-char buf_tmp[SIZE_BUF];
-int port,socket_conn,new_conn;
