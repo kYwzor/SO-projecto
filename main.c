@@ -7,7 +7,6 @@ pthread_mutex_t thrdlist_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t request_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cond_var_req = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t shmem_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t cond_var_shmem = PTHREAD_COND_INITIALIZER;
 
 int static_num;
 int compressed_num;
@@ -23,9 +22,10 @@ void stat_manager(){
 	struct tm * timeinfo;
 	struct stat mystat;
 	float req_response;
-	int plus, oldsize, size, shared_fd;
-	char string[SIZE_BUF+21], time_r[10], time_a[10];
+	int plus, oldsize, size, stat_fd, compressed;
+	char string[SIZE_BUF+21], page[SIZE_BUF], time_r[10], time_a[10];
 	char * src;
+	time_t time_requested, time_answered;
 
 	static_num=0;
 	compressed_num=0;
@@ -33,7 +33,7 @@ void stat_manager(){
 	compressed_time=0;
 
 
-	if((shared_fd = open("server.log", O_RDWR | O_CREAT)) < 0){
+	if((stat_fd = open("server.log", O_RDWR | O_CREAT)) < 0){
 		perror("Error opening server.log");
 		exit(1);
 	}
@@ -44,7 +44,7 @@ void stat_manager(){
 
 	while(1){
 		if(exit_stats_flag==1){
-			close(shared_fd);
+			close(stat_fd);
 
 			#if DEBUG
 			printf("stat_manager: Stat manager exiting\n");
@@ -53,75 +53,83 @@ void stat_manager(){
 			exit(0);
 		}
 		pthread_mutex_lock(&shmem_mutex);
-		if(shared_request->read==1){					//if read=1 we wait for worker thread
-			pthread_cond_signal(&cond_var_shmem);
+		if(shared_request->read==0){					//if read=1 we wait for worker thread
+			#if DEBUG
+			printf("stat_manager: Stat manager received a new request\n");
+			#endif
+
+			compressed=shared_request->compressed;
+			time_answered=shared_request->time_answered;
+			time_requested=shared_request->time_requested;
+			strcpy(page, shared_request->page);
+			shared_request->read=1;
+
 			pthread_mutex_unlock(&shmem_mutex);
-			continue;
+
+
+			if(compressed==0){
+				req_response = time_answered - time_requested;
+				static_time = ((static_num*static_time)+req_response)/(static_num+1);
+				static_num++;
+			}
+
+			if(compressed==1){
+				req_response = time_answered - time_requested;
+				compressed_time = ((compressed_num*compressed_time)+req_response)/(compressed_num+1);
+				compressed_num++;
+			}
+
+
+			timeinfo= localtime (&time_answered);
+			strftime(time_r, sizeof(time_r), "%H:%M:%S", timeinfo);	
+			timeinfo = localtime (&time_answered);
+			strftime(time_a, sizeof(time_a), "%H:%M:%S", timeinfo);
+			sprintf(string, "%d %s %s %s\n", compressed, page, time_r, time_a);
+			plus = strlen(string);
+
+			if(fstat(stat_fd, &mystat) <0){
+				perror("Error fstat\n");
+				close(stat_fd);
+				exit(1);
+			}
+
+			size = mystat.st_size;
+
+			if((src = mmap(0, size+1, PROT_READ | PROT_WRITE, MAP_SHARED, stat_fd, 0))== MAP_FAILED){
+				perror("Error mapping server.log");
+				close(stat_fd);
+				exit(1);
+			}
+
+			oldsize = size;
+			size += plus;
+
+			if (ftruncate(stat_fd, size) != 0){
+				perror("Error extending file");
+				close(stat_fd);
+				exit(1);
+			}
+
+			if ((src = mremap(src, oldsize, size, MREMAP_MAYMOVE)) == MAP_FAILED){
+				perror("Error extending mapping");
+				close(stat_fd);
+				exit(1);
+			}
+
+			memcpy(src+oldsize, string, size-oldsize);
+
+			if((msync(src,oldsize,MS_SYNC)) < 0)
+				perror("Error in msync");
+
+			if( munmap(src,oldsize+1) == -1)
+				perror("Error in munmap");
+
+			#if DEBUG
+			printf("stat_manager: Stat manager handled the new request. Waiting for a new one\n");
+			#endif
 		}
-		#if DEBUG
-		printf("stat_manager: Stat manager received a new request\n");
-		#endif
-
-		shared_request->read=1;
-
-		if(shared_request->compressed==0){
-			req_response = shared_request->time_answered - shared_request->time_requested;
-			static_time = ((static_num*static_time)+req_response)/(static_num+1);
-			static_num++;
-		}
-
-		if(shared_request->compressed==1){
-			req_response = shared_request->time_answered - shared_request->time_requested;
-			compressed_time = ((compressed_num*compressed_time)+req_response)/(compressed_num+1);
-			compressed_num++;
-		}
-
-
-		timeinfo= localtime (&shared_request->time_answered);
-		strftime(time_r, sizeof(time_r), "%H:%M:%S", timeinfo);	
-		timeinfo = localtime (&shared_request->time_answered);
-		strftime(time_a, sizeof(time_a), "%H:%M:%S", timeinfo);
-		sprintf(string, "%d %s %s %s\n", shared_request->compressed, shared_request->page, time_r, time_a);
-		plus = strlen(string);
-
-		if(fstat(shared_fd, &mystat) <0){
-			perror("Error fstat\n");
-			close(shared_fd);
-			exit(1);
-		}
-
-		size = mystat.st_size;
-
-		if((src = mmap(0, size+1, PROT_READ | PROT_WRITE, MAP_SHARED, shared_fd, 0))== MAP_FAILED){
-			perror("Error mapping server.log");
-			close(shared_fd);
-			exit(1);
-		}
-
-		oldsize = size;
-		size += plus;
-
-		if (ftruncate(shared_fd, size) != 0){
-			perror("Error extending file");
-			close(shared_fd);
-			exit(1);
-		}
-
-		if ((src = mremap(src, oldsize, size, MREMAP_MAYMOVE)) == MAP_FAILED){
-			perror("Error extending mapping");
-			close(shared_fd);
-			exit(1);
-		}
-
-		memcpy(src+oldsize, string, size-oldsize);
-
-		if((msync(src,oldsize,MS_SYNC)) < 0)
-			perror("Error in msync");
-
-		if( munmap(src,oldsize+1) == -1)
-			perror("Error in munmap");
-
-		pthread_mutex_unlock(&shmem_mutex);
+		else
+			pthread_mutex_unlock(&shmem_mutex);
 	}
 }
 
@@ -298,7 +306,6 @@ void *worker_threads(void *id_ptr){
 	int socket;
 	time_t time_requested;
 	time_t time_answered;
-	int read;
 
 	#if DEBUG
 	printf("worker_threads: Thread %d working!\n", id);
@@ -320,7 +327,6 @@ void *worker_threads(void *id_ptr){
 		compressed = next_request->compressed;
 		socket = next_request->socket;
 		time_requested = next_request->time_requested;
-		read = next_request->read;
 
 		//free all request stuff before setting it to NULL!!!!
 		free(next_request);
@@ -338,22 +344,25 @@ void *worker_threads(void *id_ptr){
 		close(socket);
 		time_answered=time(NULL);
 
-		pthread_mutex_lock(&shmem_mutex);
-		while(shared_request->read==0){
-			printf("worker_threads: Thread %d waiting for old shared_request to be read!\n", id);
-			pthread_cond_wait(&cond_var_req, &request_mutex);
+		while(1){
+			pthread_mutex_lock(&shmem_mutex);
 			if(exit_thread_flag==1){
-				pthread_mutex_unlock(&request_mutex);
+				pthread_mutex_unlock(&shmem_mutex);
 				pthread_exit(NULL);
 			}
+			if(shared_request->read==1){
+				break;
+			}
+			pthread_mutex_unlock(&shmem_mutex);
+			//sleep(1);
 		}
 		printf("worker_threads: Thread %d changing shared_request!\n", id);
 		strcpy(shared_request->page, page);
 		shared_request->compressed = compressed;
 		shared_request->socket = socket;
 		shared_request->time_requested = time_requested;
-		shared_request->read = read;
 		shared_request->time_answered = time_answered;
+		shared_request->read = 0;
 		pthread_mutex_unlock(&shmem_mutex);
 
 		if(exit_thread_flag==1){
@@ -365,7 +374,15 @@ void *worker_threads(void *id_ptr){
 void *scheduler(){
 	Req_list aux, prev_aux, next_aux;
 	int type;
+
+	#if DEBUG
+	printf("scheduler: Scheduler thread working!\n");
+	#endif
+
 	while(1){
+		if(exit_thread_flag==1)
+			pthread_exit(NULL);
+
 		pthread_mutex_lock(&config_mutex);
 		type=config->sched;
 		pthread_mutex_unlock(&config_mutex);
@@ -373,12 +390,13 @@ void *scheduler(){
 		pthread_mutex_lock(&buffer_mutex);
 		aux=rlist->next;
 		if(aux!=NULL){
-			printf("scheduler: Found unanswered request on buffer.\n");
+			//printf("scheduler: Found unanswered request on buffer.\n");
 
 			pthread_mutex_lock(&request_mutex);
 			if(next_request!=NULL){					//if next_request!=NULL it means it hasn't been dispatched by workers
 				pthread_cond_signal(&cond_var_req);
 				pthread_mutex_unlock(&request_mutex);
+				pthread_mutex_unlock(&buffer_mutex);
 				continue;
 			}
 			switch(type){
@@ -429,9 +447,6 @@ void *scheduler(){
 			printf("scheduler: Deleted request from buffer.\n");
 		}
 		pthread_mutex_unlock(&buffer_mutex);
-		if(exit_thread_flag==1){
-			pthread_exit(NULL);
-		}
 	}
 }
 
@@ -446,6 +461,10 @@ void *listen_console(){
 	tv.tv_sec=1;
 	tv.tv_usec=0;
 
+	#if DEBUG
+	printf("listen_console: Pipe thread working!\n");
+	#endif
+
 	// Opens the pipe for reading
 	while(1){
 		if((fd_pipe=open(PIPE_NAME, O_RDONLY | O_NONBLOCK)) < 0){
@@ -453,7 +472,10 @@ void *listen_console(){
 			exit(1);
 		}
 
-		do {
+		while(1){
+			if(exit_thread_flag==1){
+				pthread_exit(NULL);
+			}
 			FD_ZERO(&read_set);
 			FD_SET(fd_pipe, &read_set);
 			if(select(fd_pipe+1, &read_set, NULL, NULL, &tv)>0){
@@ -570,11 +592,10 @@ void *listen_console(){
 							continue;
 					}
 				}
+				else
+					break;
 			}
-			if(exit_thread_flag==1){
-				pthread_exit(NULL);
-			}
-		} while(nread!=0);
+		}
 		close(fd_pipe);
 	}
 }
