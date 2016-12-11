@@ -365,6 +365,11 @@ void *worker_threads(void *id_ptr){
 void *scheduler(){
 	Req_list aux, prev_aux, next_aux;
 	int type;
+
+	#if DEBUG
+	printf("scheduler: Scheduler thread working!\n");
+	#endif
+
 	while(1){
 		pthread_mutex_lock(&config_mutex);
 		type=config->sched;
@@ -443,8 +448,12 @@ void *listen_console(){
 	char* token;
 	fd_set read_set;
 	struct timeval tv;
-	tv.tv_sec=1;
+	tv.tv_sec=4;
 	tv.tv_usec=0;
+
+	#if DEBUG
+	printf("listen_console: Pipe thread working!\n");
+	#endif
 
 	// Opens the pipe for reading
 	while(1){
