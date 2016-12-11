@@ -80,6 +80,49 @@ void execute_script(int socket)
 	
 	return;
 }
+void send_compressed_page(char* page, int socket)
+{
+	int pid;
+	char buf_tmp[SIZE_BUF], aux[SIZE_BUF];
+
+	// Searchs for page in directory htdocs
+	sprintf(buf_tmp,"htdocs/%s",page);
+
+	#if DEBUG
+	printf("send_compressed_page: searching for %s\n",buf_tmp);
+	#endif
+
+	if(access(buf_tmp, F_OK) == -1) {
+		// File not found, send error to client
+		printf("send_compressed_page: file %s not found, alerting client\n",buf_tmp);
+		not_found(socket);
+	}
+	else{
+		pid = fork();
+		if(pid == 0){
+			if(execlp("gunzip","gunzip", "-k","-f",buf_tmp,(char*)NULL)==-1){
+				perror("send_compressed_page: Error extracting");
+			}
+		}
+		else
+			waitpid(pid,NULL,0);
+
+		printf("send_compressed_page: %s extracted\n", page);
+		strcpy(aux, page);
+		aux[strlen(aux)-3]='\0';
+		send_page(aux, socket);
+
+		sprintf(buf_tmp,"htdocs/%s",aux);
+		pid = fork();
+		if(pid == 0){
+			if(execlp("rm","rm",buf_tmp,(char*)NULL)==-1){
+				perror("send_compressed_page: Error deleting file");
+			}
+		}
+		else
+			waitpid(pid,NULL,0);
+	}
+}
 
 
 // Send html page to client

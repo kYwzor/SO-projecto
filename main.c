@@ -336,9 +336,11 @@ void *worker_threads(void *id_ptr){
 		// Verify if request is for a page or script
 		if(!strncmp(page,CGI_EXPR,strlen(CGI_EXPR)))
 			execute_script(socket);	
-		else
+		else if(compressed==0)
 			// Search file with html page and send to client
 			send_page(page,socket);
+		else
+			send_compressed_page(page,socket);
 
 		// Terminate connection with client 
 		close(socket);

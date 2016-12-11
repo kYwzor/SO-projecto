@@ -100,6 +100,7 @@ void identify(int socket);
 void get_request(char* req_buf, int socket);
 int  read_line(char* buf, int socket, int n);
 void send_header(int socket);
+void send_compressed_page(char* page, int socket);
 void send_page(char* page, int socket);
 void execute_script(int socket);
 void not_found(int socket);
