@@ -335,3 +335,30 @@ void cannot_execute(int socket)
 
 	return;
 }
+
+void file_not_allowed(int socket)
+{
+	char buf[SIZE_BUF];
+	sprintf(buf,"HTTP/1.0 500 Internal Server Error\r\n");
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 5000 internal server error");
+		exit(1);
+	}
+	sprintf(buf,"Content-type: text/html\r\n");
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 5000 internal server error");
+		exit(1);
+	}
+	sprintf(buf,"\r\n");
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 5000 internal server error");
+		exit(1);
+	}
+	sprintf(buf,"<P>File requested not allowed.\r\n");
+	if((send(socket,buf, strlen(buf), MSG_NOSIGNAL)==-1) && (errno!= EPIPE)){
+		perror("not_found: Error sending 5000 internal server error");
+		exit(1);
+	}
+
+	return;
+}

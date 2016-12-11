@@ -105,6 +105,7 @@ void send_page(char* page, int socket);
 void execute_script(int socket);
 void not_found(int socket);
 void cannot_execute(int socket);
+void file_not_allowed(int socket);
 
 //variaveis globais main.c
 int socket_conn;

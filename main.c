@@ -301,6 +301,7 @@ void run_http(){
 }
 void *worker_threads(void *id_ptr){
 	int id = *((int *)id_ptr);
+	int i, flag;
 	char page[SIZE_BUF];
 	int compressed;
 	int socket;
@@ -339,8 +340,26 @@ void *worker_threads(void *id_ptr){
 		else if(compressed==0)
 			// Search file with html page and send to client
 			send_page(page,socket);
-		else
-			send_compressed_page(page,socket);
+		else{
+			pthread_mutex_lock(&config_mutex);
+			flag=0;
+			for(i=0; i<config->nallowed; i++){
+				if(strcmp(config->allowed[i], page)==0){
+					flag=1;
+					break;
+				}
+			}
+			pthread_mutex_unlock(&config_mutex);
+
+			if(flag){
+				printf("worker_threads: file %s is allowed\n", page);
+				send_compressed_page(page,socket);
+			}
+			else{
+				printf("worker_threads: file %s is not allowed\n", page);
+				file_not_allowed(socket);
+			}
+		}
 
 		// Terminate connection with client 
 		close(socket);
