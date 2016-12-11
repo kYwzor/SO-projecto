@@ -2,8 +2,13 @@
 #include "functions.h"
 
 pthread_mutex_t buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t config_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t thrdlist_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t request_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t cond_var = PTHREAD_COND_INITIALIZER;
+pthread_cond_t cond_var_req = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t shmem_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond_var_shmem = PTHREAD_COND_INITIALIZER;
+
 
 void stat_manager(){
 	#if DEBUG
@@ -102,7 +107,7 @@ void run_http(){
 	Request* new_req;
 	char req_buf[SIZE_BUF];
 
-	port=config->port;
+	port=config->port;	//no need for mutex, port never changes
 	printf("run_http: Listening for HTTP requests on port %d\n",port);
 
 	// Configure listening port
@@ -117,7 +122,7 @@ void run_http(){
 
 		// Accept connection on socket
 		if ( (new_conn = accept(socket_conn,(struct sockaddr *)&client_name,&client_name_len)) == -1 ) {
-			printf("run_http: Error accepting connection\n");
+			perror("run_http: Error accepting connection");
 			exit(1);
 		}
 
@@ -180,7 +185,7 @@ void *worker_threads(void *id_ptr){
 		pthread_mutex_lock(&request_mutex);
 		while(next_request==NULL){
 			printf("worker_threads: Thread %d waiting for a request!\n", id);
-			pthread_cond_wait(&cond_var, &request_mutex);
+			pthread_cond_wait(&cond_var_req, &request_mutex);
 			if(exit_thread_flag==1){
 				pthread_mutex_unlock(&request_mutex);
 				pthread_exit(NULL);
@@ -210,15 +215,17 @@ void *worker_threads(void *id_ptr){
 		close(socket);
 		time_answered=time(NULL);
 
-
-		//MUTEXES COM SHARED MEMORY!!!!!
-		strcpy(shared_request->page, page);
-		shared_request->compressed = compressed;
-		shared_request->socket = socket;
-		shared_request->time_requested = time_requested;
-		shared_request->read = read;
-		shared_request->time_answered = time_answered;
-
+		pthread_mutex_lock(&shmem_mutex);
+		if(shared_request->read==1){
+			strcpy(shared_request->page, page);
+			shared_request->compressed = compressed;
+			shared_request->socket = socket;
+			shared_request->time_requested = time_requested;
+			shared_request->read = read;
+			shared_request->time_answered = time_answered;
+		}
+		pthread_cond_signal(&cond_var_shmem);
+		pthread_mutex_unlock(&shmem_mutex);
 
 		if(exit_thread_flag==1){
 			pthread_exit(NULL);
@@ -228,43 +235,69 @@ void *worker_threads(void *id_ptr){
 
 void *scheduler(){
 	Req_list aux, prev_aux, next_aux;
+	int type;
 	while(1){
+		pthread_mutex_lock(&config_mutex);
+		type=config->sched;
+		pthread_mutex_unlock(&config_mutex);
+
 		pthread_mutex_lock(&buffer_mutex);
 		aux=rlist->next;
 		if(aux!=NULL){
 			printf("scheduler: Found unanswered request on buffer.\n");
-			//mutex for config needed???
-			switch(config->sched){
+
+			pthread_mutex_lock(&request_mutex);
+			if(next_request!=NULL){					//if next_request!=NULL it means it hasn't been dispatched by workers
+				pthread_cond_signal(&cond_var_req);
+				pthread_mutex_unlock(&request_mutex);
+				continue;
+			}
+			switch(type){
 				case 0:
-					pthread_mutex_lock(&request_mutex);
-					if(next_request!=NULL){
-						pthread_cond_signal(&cond_var);
-						pthread_mutex_unlock(&request_mutex);
-						break;
-					}
 					next_request=aux->req;
-					printf("scheduler: Next request is %s from socket %d.\n", next_request->page, next_request->socket);
-					pthread_cond_signal(&cond_var);
-					pthread_mutex_unlock(&request_mutex);
-
-					prev_aux = aux->prev;
-					next_aux = aux->next;
-
-					prev_aux->next = next_aux;
-					if(next_aux!=NULL)
-						next_aux->prev = prev_aux;
-
-					free(aux);
-					printf("scheduler: Deleted request from buffer.\n");
-
 					break;
 
 				case 1:
+					while(aux!=NULL){
+						if(aux->req->compressed==0){
+							next_request=aux->req;
+							break;
+						}
+						aux=aux->next;
+					}
+					if(aux==NULL)
+						aux=rlist->next;
+						next_request=aux->req;
+
 					break;
 
 				case 2:
+					while(aux!=NULL){
+						if(aux->req->compressed==1){
+							next_request=aux->req;
+							break;
+						}
+						aux=aux->next;
+					}
+					if(aux==NULL)
+						aux=rlist->next;
+						next_request=aux->req;
+
 					break;
 			}
+			printf("scheduler: Next request is %s from socket %d.\n", next_request->page, next_request->socket);
+			pthread_cond_signal(&cond_var_req);
+			pthread_mutex_unlock(&request_mutex);
+
+			prev_aux = aux->prev;
+			next_aux = aux->next;
+
+			prev_aux->next = next_aux;
+			if(next_aux!=NULL)
+				next_aux->prev = prev_aux;
+
+			free(aux);
+			printf("scheduler: Deleted request from buffer.\n");
 		}
 		pthread_mutex_unlock(&buffer_mutex);
 		if(exit_thread_flag==1){
@@ -275,8 +308,8 @@ void *scheduler(){
 
 void *listen_console(){
 	Message received;
-	int aux,i;
-	int flag;
+	int aux, i, flag, fd_pipe, nread;
+	Thread_list aux_thrd, new_thrdnode;
 	char str_aux[SIZE_BUF];
 	char* token;
 	fd_set read_set;
@@ -284,84 +317,137 @@ void *listen_console(){
 	tv.tv_sec=1;
 	tv.tv_usec=0;
 
-	while (1) {
-		FD_ZERO(&read_set);
-		FD_SET(fd_pipe, &read_set);
-		if(select(fd_pipe+1, &read_set, NULL, NULL, &tv)>0){
-	    	read(fd_pipe, &received, sizeof(Message));
-	    	printf("listen_console: Received a command from the console\n");
+	// Opens the pipe for reading
+	while(1){
+		if((fd_pipe=open(PIPE_NAME, O_RDONLY | O_NONBLOCK)) < 0){
+			perror("create_pipe: Cannot open pipe for reading");
+			exit(1);
+		}
 
-	    	switch(received.type){
-	    		case 1:
-	    			printf("listen_console: Console requested a change to the scheduling type.\n");
-	    			aux = get_scheduling_type(received.value);
-	    			if(aux==-1){
-						printf("listen_console: Scheduling type received nonexistent. Ignoring command.\n");
-						continue;
-					}
-					config->sched=aux;
-					printf("listen_console: Scheduling type set to: '%s'.\n",config->sched==0 ? "First in first out" : config->sched==1 ? "Prioritizing static files" : "Prioritizing compressed files");
-	    			break;
-	    		case 2:
-	    			printf("listen_console: Console requested a change to the threadpool\n");
-	    			aux=string_to_int(received.value);
-	    			if(aux==0){
-	    				printf("listen_console: Threadpool size can't be 0. Ignoring command.\n");
-	    				continue;
-	    			}
-	    			else if(aux<0){
-	    				printf("listen_console: Threadpool size received is not valid. Ignoring command.\n");
-	    				continue;
-	    			}
-	    			config->threadp=aux;
-	    			printf("listen_console: Threadpool size set to %d.\n", aux);
-	    			break;
-	    		case 3:
-	    			printf("listen_console: Console requested a change to the allowed compressed files.\n");
-					
-					strcpy(str_aux, received.value);
-					flag=0;
-					token=strtok(str_aux, ";");
-					for(aux=0; token != NULL; aux++){
-						i=strlen(token);
-						if(strcmp(token+i-3, ".gz")!=0){
-							flag=1;
+		do {
+			FD_ZERO(&read_set);
+			FD_SET(fd_pipe, &read_set);
+			if(select(fd_pipe+1, &read_set, NULL, NULL, &tv)>0){
+				nread=read(fd_pipe, &received, sizeof(Message));
+				if(nread>0){
+					printf("listen_console: Received a command from the console\n");
+					switch(received.type){
+						case 1:
+							printf("listen_console: Console requested a change to the scheduling type.\n");
+							aux = get_scheduling_type(received.value);
+							if(aux==-1){
+								printf("listen_console: Scheduling type received nonexistent. Ignoring command.\n");
+								continue;
+							}
+							pthread_mutex_lock(&config_mutex);
+							config->sched=aux;
+							printf("listen_console: Scheduling type set to: '%s'.\n",config->sched==0 ? "First in first out" : config->sched==1 ? "Prioritizing static files" : "Prioritizing compressed files");
+							pthread_mutex_unlock(&config_mutex);
 							break;
-						}
-						token = strtok(NULL, ";");
-					}
 
-					if(flag){
-						printf("listen_console: Invalid file names. Ignoring command.\n");
-						continue;
-					}
+						case 2:
+							printf("listen_console: Console requested a change to the threadpool\n");
+							aux=string_to_int(received.value);
+							if(aux==0){
+								printf("listen_console: Threadpool size can't be 0. Ignoring command.\n");
+								continue;
+							}
+							else if(aux<0){
+								printf("listen_console: Threadpool size received is not valid. Ignoring command.\n");
+								continue;
+							}
+							pthread_mutex_lock(&config_mutex);
+							if(config->threadp<aux){
+								pthread_mutex_lock(&thrdlist_mutex);
+								aux_thrd=thrdlist;
+								while(aux_thrd->next!=NULL)
+									aux_thrd=aux_thrd->next;
 
-					free_allowed_files_array();
-					config->nallowed=aux;
-					config->allowed=(char**) malloc(config->nallowed*sizeof(char*));
+								for(i=0; i<aux-config->threadp; i++){
+									new_thrdnode = (Thread_list) malloc(sizeof(Thread_list_node));
+									new_thrdnode->id = aux_thrd->id+1;
+									new_thrdnode->next = NULL;
+									new_thrdnode->prev = aux_thrd;
+									aux_thrd->next = new_thrdnode;
 
-					token=strtok(received.value, ";");
-					for(i=0; token != NULL; i++){
-						config->allowed[i]=strdup(token);
-						token = strtok(NULL, ";");
-					}
+									if(pthread_create(&new_thrdnode->thread,NULL,worker_threads,&new_thrdnode->id)==0){
+										#if DEBUG
+										printf("start_threads: Created thread #%d\n", new_thrdnode->id);
+										#endif
+									}
+									else{
+										perror("start_threads: Error creating threadpool!");
+										exit(1);
+									}
 
-					printf("listen_console: %d files allowed: ", config->nallowed);
-					for(i=0; i<config->nallowed; i++){
-						printf("%s;", config->allowed[i]);
+									aux_thrd = new_thrdnode;
+								}
+									
+
+								pthread_mutex_unlock(&thrdlist_mutex);
+							}
+							else if(config->threadp>aux){
+								printf("NOT YET IMPLEMENTED, WILL CAUSE PROBLEMS\n");
+
+							}
+
+							config->threadp=aux;
+
+							printf("listen_console: Threadpool size set to %d.\n", config->threadp);
+							pthread_mutex_unlock(&config_mutex);
+							break;
+
+						case 3:
+							printf("listen_console: Console requested a change to the allowed compressed files.\n");
+							
+							strcpy(str_aux, received.value);
+							flag=0;
+							token=strtok(str_aux, ";");
+							for(aux=0; token != NULL; aux++){
+								i=strlen(token);
+								if(strcmp(token+i-3, ".gz")!=0){
+									flag=1;
+									break;
+								}
+								token = strtok(NULL, ";");
+							}
+
+							if(flag){
+								printf("listen_console: Invalid file names. Ignoring command.\n");
+								continue;
+							}
+							pthread_mutex_lock(&config_mutex);
+							free_allowed_files_array();
+							config->nallowed=aux;
+							config->allowed=(char**) malloc(config->nallowed*sizeof(char*));
+
+							token=strtok(received.value, ";");
+							for(i=0; token != NULL; i++){
+								config->allowed[i]=strdup(token);
+								token = strtok(NULL, ";");
+							}
+
+							printf("listen_console: %d files allowed: ", config->nallowed);
+							for(i=0; i<config->nallowed; i++){
+								printf("%s;", config->allowed[i]);
+							}
+							printf("\n");
+							pthread_mutex_unlock(&config_mutex);
+							
+							break;
+
+						default:
+							printf("listen_console: Received command type not recognised. Ignoring command.\n");		//should never reach this point
+							continue;
 					}
-					printf("\n");
-					
-	    			break;
-	    		default:
-	    			printf("listen_console: Received command type not recognised. Ignoring command.\n");		//should never reach this point
-	    			continue;
-	    	}
-	    }
-	    if(exit_thread_flag==1){
-	    	pthread_exit(NULL);
-	    }
-    }
+				}
+			}
+			if(exit_thread_flag==1){
+				pthread_exit(NULL);
+			}
+		} while(nread!=0);
+		close(fd_pipe);
+	}
 }
 
 void start_stat_process(){
@@ -416,12 +502,12 @@ void start_threads(){
 		exit(1);
 	}
 
-	threads = (Thread_list) malloc(sizeof(Thread_list_node));
-	threads->id=-1;
-	threads->next=NULL;
-	threads->prev=NULL;
+	thrdlist = (Thread_list) malloc(sizeof(Thread_list_node));
+	thrdlist->id=-1;
+	thrdlist->next=NULL;
+	thrdlist->prev=NULL;
 
-	aux=threads;
+	aux=thrdlist;
 	for(i=0; i<size; i++){
 		new = (Thread_list) malloc(sizeof(Thread_list_node));
 		new->id = i;
@@ -470,8 +556,8 @@ void join_threads(){
 		exit(1);
 	}
 
-	pthread_cond_broadcast(&cond_var);
-	aux=threads;
+	pthread_cond_broadcast(&cond_var_req);
+	aux=thrdlist;
 	for (i=0;i<config->threadp;i++){
 		aux=aux->next;
 		if(pthread_join(aux->thread,NULL) == 0){
@@ -529,10 +615,10 @@ void free_all_allocations(){
 	}
 
 	//free do espaco para pthread_t e int que sao usados pelos workers
-	while(threads!=NULL){
-		aux_t=threads->next;
-		free(threads);
-		threads=aux_t;
+	while(thrdlist!=NULL){
+		aux_t=thrdlist->next;
+		free(thrdlist);
+		thrdlist=aux_t;
 	}
 
 	//free da configuracao
@@ -592,15 +678,9 @@ void create_buffer(){
 }
 
 void create_pipe(){
-    // Creates the named pipe if it doesn't exist yet
+	// Creates the named pipe if it doesn't exist yet
 	if ((mkfifo(PIPE_NAME, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)){
 		perror("create_pipe: Error creating pipe");
-		exit(1);
-	}
-
-    // Opens the pipe for reading
-	if((fd_pipe=open(PIPE_NAME, O_RDWR)) < 0){
-		perror("create_pipe: Cannot open pipe for reading");
 		exit(1);
 	}
 }

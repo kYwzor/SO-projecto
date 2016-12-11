@@ -110,10 +110,9 @@ Request *next_request;			//alocacao dinamica em rlist
 int stat_sm_id;
 Request *shared_request;		//shared memory
 
-Thread_list threads;
+Thread_list thrdlist;
 pthread_t pipe_thread;
 pthread_t scheduler_thread;
 
 pid_t stat_pid;
-int fd_pipe;
 int exit_thread_flag;
