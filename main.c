@@ -311,16 +311,21 @@ void *worker_threads(void *id_ptr){
 	#if DEBUG
 	printf("worker_threads: Thread %d working!\n", id);
 	#endif
+	
+	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
 
 	while(1){
 		pthread_mutex_lock(&request_mutex);
 		while(next_request==NULL){
-			printf("worker_threads: Thread %d waiting for a request!\n", id);
 			pthread_cond_wait(&cond_var_req, &request_mutex);
-			if(exit_thread_flag==1){
-				pthread_mutex_unlock(&request_mutex);
+			pthread_mutex_unlock(&request_mutex);
+			if(exit_thread_flag==1)
 				pthread_exit(NULL);
-			}
+			pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+			sleep(1);
+			pthread_testcancel();
+			pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+			pthread_mutex_lock(&request_mutex);
 		}
 		printf("worker_threads: Thread %d received a request!\n", id);
 
@@ -371,11 +376,10 @@ void *worker_threads(void *id_ptr){
 				pthread_mutex_unlock(&shmem_mutex);
 				pthread_exit(NULL);
 			}
+			pthread_mutex_unlock(&shmem_mutex);
 			if(shared_request->read==1){
 				break;
 			}
-			pthread_mutex_unlock(&shmem_mutex);
-			//sleep(1);
 		}
 		printf("worker_threads: Thread %d changing shared_request!\n", id);
 		strcpy(shared_request->page, page);
@@ -530,12 +534,15 @@ void *listen_console(){
 							}
 							pthread_mutex_lock(&config_mutex);
 							if(config->threadp<aux){
+								#if DEBUG
+								printf("start_threads: increasing threadpool\n");
+								#endif
 								pthread_mutex_lock(&thrdlist_mutex);
 								aux_thrd=thrdlist;
 								while(aux_thrd->next!=NULL)
 									aux_thrd=aux_thrd->next;
 
-								for(i=0; i<aux-config->threadp; i++){
+								for(i=0; i<aux - config->threadp; i++){
 									new_thrdnode = (Thread_list) malloc(sizeof(Thread_list_node));
 									new_thrdnode->id = aux_thrd->id+1;
 									new_thrdnode->next = NULL;
@@ -559,8 +566,30 @@ void *listen_console(){
 								pthread_mutex_unlock(&thrdlist_mutex);
 							}
 							else if(config->threadp>aux){
-								printf("NOT YET IMPLEMENTED, WILL CAUSE PROBLEMS\n");
+								#if DEBUG
+								printf("start_threads: decreasing threadpool\n");
+								#endif
 
+								pthread_mutex_lock(&thrdlist_mutex);
+								aux_thrd=thrdlist;
+								while(aux_thrd->next!=NULL)
+									aux_thrd=aux_thrd->next;
+
+								for(i=0; i<config->threadp - aux; i++){
+
+									pthread_cancel(aux_thrd->thread);
+									pthread_cond_broadcast(&cond_var_req);
+									if(pthread_join(aux_thrd->thread,NULL) == 0){
+										#if DEBUG
+										printf("listen_console: Thread %d joined.\n", aux_thrd->id);
+										#endif
+									}
+									aux_thrd=aux_thrd->prev;
+									free(aux_thrd->next);
+									aux_thrd->next=NULL;
+								}
+
+								pthread_mutex_unlock(&thrdlist_mutex);
 							}
 
 							config->threadp=aux;
