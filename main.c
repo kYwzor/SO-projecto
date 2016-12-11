@@ -9,17 +9,140 @@ pthread_cond_t cond_var_req = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t shmem_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cond_var_shmem = PTHREAD_COND_INITIALIZER;
 
+int static_num;
+int compressed_num;
+float static_time;
+float compressed_time;
+
 
 void stat_manager(){
 	#if DEBUG
 	printf("stat_manager: Stat manager started working\n");
 	#endif
-	while(1){
-		#if DEBUG
-		printf("stat_manager: Stat manager still running\n");
-		#endif
-		sleep(20);
+
+	struct tm * timeinfo;
+	struct stat mystat;
+	float req_response;
+	int plus, oldsize, size, shared_fd;
+	char string[SIZE_BUF+21], time_r[10], time_a[10];
+	char * src;
+
+	static_num=0;
+	compressed_num=0;
+	static_time=0;
+	compressed_time=0;
+
+
+	if((shared_fd = open("server.log", O_RDWR | O_CREAT)) < 0){
+		perror("Error opening server.log");
+		exit(1);
 	}
+
+	signal(SIGUSR1, catch_sigusr1);
+	signal(SIGUSR2, catch_sigusr2);
+	signal(SIGTERM, terminate_stat_manager);
+
+	while(1){
+		if(exit_stats_flag==1){
+			close(shared_fd);
+
+			#if DEBUG
+			printf("stat_manager: Stat manager exiting\n");
+			#endif
+
+			exit(0);
+		}
+		pthread_mutex_lock(&shmem_mutex);
+		if(shared_request->read==1){					//if read=1 we wait for worker thread
+			pthread_cond_signal(&cond_var_shmem);
+			pthread_mutex_unlock(&shmem_mutex);
+			continue;
+		}
+		#if DEBUG
+		printf("stat_manager: Stat manager received a new request\n");
+		#endif
+
+		shared_request->read=1;
+
+		if(shared_request->compressed==0){
+			req_response = shared_request->time_answered - shared_request->time_requested;
+			static_time = ((static_num*static_time)+req_response)/(static_num+1);
+			static_num++;
+		}
+
+		if(shared_request->compressed==1){
+			req_response = shared_request->time_answered - shared_request->time_requested;
+			compressed_time = ((compressed_num*compressed_time)+req_response)/(compressed_num+1);
+			compressed_num++;
+		}
+
+
+		timeinfo= localtime (&shared_request->time_answered);
+		strftime(time_r, sizeof(time_r), "%H:%M:%S", timeinfo);	
+		timeinfo = localtime (&shared_request->time_answered);
+		strftime(time_a, sizeof(time_a), "%H:%M:%S", timeinfo);
+		sprintf(string, "%d %s %s %s\n", shared_request->compressed, shared_request->page, time_r, time_a);
+		plus = strlen(string);
+
+		if(fstat(shared_fd, &mystat) <0){
+			perror("Error fstat\n");
+			close(shared_fd);
+			exit(1);
+		}
+
+		size = mystat.st_size;
+
+		if((src = mmap(0, size+1, PROT_READ | PROT_WRITE, MAP_SHARED, shared_fd, 0))== MAP_FAILED){
+			perror("Error mapping server.log");
+			close(shared_fd);
+			exit(1);
+		}
+
+		oldsize = size;
+		size += plus;
+
+		if (ftruncate(shared_fd, size) != 0){
+			perror("Error extending file");
+			close(shared_fd);
+			exit(1);
+		}
+
+		if ((src = mremap(src, oldsize, size, MREMAP_MAYMOVE)) == MAP_FAILED){
+			perror("Error extending mapping");
+			close(shared_fd);
+			exit(1);
+		}
+
+		memcpy(src+oldsize, string, size-oldsize);
+
+		if((msync(src,oldsize,MS_SYNC)) < 0)
+			perror("Error in msync");
+
+		if( munmap(src,oldsize+1) == -1)
+			perror("Error in munmap");
+
+		pthread_mutex_unlock(&shmem_mutex);
+	}
+}
+
+void catch_sigusr1(){
+	printf("Number of pages (Static): %d\n",static_num);
+	printf("Number of pages (Compressed): %d\n",compressed_num);
+	printf("Average time (Static): %f\n",static_time);
+	printf("Average time (Compressed): %f\n",compressed_time);
+}
+
+
+void catch_sigusr2(){
+	static_num=0;
+	compressed_num=0;
+	static_time=0;
+	compressed_time=0;
+	printf("RESETED\n");
+}
+
+void terminate_stat_manager(){
+	exit_stats_flag=1;
 }
 
 void load_conf(){
@@ -216,15 +339,21 @@ void *worker_threads(void *id_ptr){
 		time_answered=time(NULL);
 
 		pthread_mutex_lock(&shmem_mutex);
-		if(shared_request->read==1){
-			strcpy(shared_request->page, page);
-			shared_request->compressed = compressed;
-			shared_request->socket = socket;
-			shared_request->time_requested = time_requested;
-			shared_request->read = read;
-			shared_request->time_answered = time_answered;
+		while(shared_request->read==0){
+			printf("worker_threads: Thread %d waiting for old shared_request to be read!\n", id);
+			pthread_cond_wait(&cond_var_req, &request_mutex);
+			if(exit_thread_flag==1){
+				pthread_mutex_unlock(&request_mutex);
+				pthread_exit(NULL);
+			}
 		}
-		pthread_cond_signal(&cond_var_shmem);
+		printf("worker_threads: Thread %d changing shared_request!\n", id);
+		strcpy(shared_request->page, page);
+		shared_request->compressed = compressed;
+		shared_request->socket = socket;
+		shared_request->time_requested = time_requested;
+		shared_request->read = read;
+		shared_request->time_answered = time_answered;
 		pthread_mutex_unlock(&shmem_mutex);
 
 		if(exit_thread_flag==1){
@@ -586,6 +715,7 @@ void start_sm(){
 		printf("start_sm: Stat shared memory created - ID: %d\n",stat_sm_id);
 		#endif
 		shared_request = (Request*) shmat(stat_sm_id,NULL,0);
+		shared_request->read=1;
 	}
 	else{
 		perror("start_sm: Error creating shared memory!");
@@ -631,8 +761,7 @@ void free_all_allocations(){
 }
 
 // Closes socket before closing
-void catch_ctrlc(int sig)
-{
+void catch_ctrlc(){
 	printf("\nServer terminating\n");
 	close(socket_conn);
 	#if DEBUG
@@ -645,8 +774,9 @@ void catch_ctrlc(int sig)
 	#if DEBUG
 	printf("catch_ctrlc: Killing stat process...\n");
 	#endif
-
+	
 	kill(stat_pid, SIGTERM);
+	wait(NULL);
 
 	#if DEBUG
 	printf("catch_ctrlc: Stat process killed.\n");

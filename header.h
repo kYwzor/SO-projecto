@@ -1,4 +1,4 @@
-//includes
+#define _GNU_SOURCE 1
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -19,6 +19,8 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/mman.h>
+#include <linux/mman.h>
 
 // Produce debug information (if 0 no information is shown)
 #define DEBUG	  	1	
@@ -75,6 +77,9 @@ typedef struct msg_struct{		//Mensagens da consola
 
 //functions main.c
 void stat_manager();
+void catch_sigusr1();
+void catch_sigusr2();
+void terminate_stat_manager();
 void load_conf();
 void run_http();
 void *listen_console();
@@ -85,7 +90,7 @@ void join_threads();
 void start_sm();
 void free_allowed_files_array();
 void free_all_alocations();
-void catch_ctrlc(int);
+void catch_ctrlc();
 void create_buffer();
 void create_pipe();
 
@@ -116,3 +121,4 @@ pthread_t scheduler_thread;
 
 pid_t stat_pid;
 int exit_thread_flag;
+int exit_stats_flag;
