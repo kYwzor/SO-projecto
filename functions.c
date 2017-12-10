@@ -1,3 +1,8 @@
+/*
+Tiago Miguel Vitorino Simões Gomes – 2015238615
+Leonardo Machado Alves Vieira – 2015236155
+Tempo total: 75h
+*/
 #include "functions.h"
 #include "header.h"
 
